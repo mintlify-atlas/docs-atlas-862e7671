@@ -1,0 +1,129 @@
+{
+  "projectType": "saas",
+  "projectName": "PromptRepo",
+  "projectDescription": "Version-controlled prompt management system with dynamic variable resolution, real-time previews, and MCP integration for AI agents.",
+  "theme": "palm",
+  "primaryColor": "#7E9CD8",
+  "lightColor": "#DCD7BA",
+  "darkColor": "#16161D",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/prompt-management",
+              "features/version-control",
+              "features/variable-resolution",
+              "features/collections",
+              "features/search",
+              "features/public-sharing"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/creating-prompts",
+              "guides/using-variables",
+              "guides/managing-collections",
+              "guides/keyboard-shortcuts"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "MCP Integration",
+        "groups": [
+          {
+            "group": "Setup",
+            "pages": [
+              "mcp/overview",
+              "mcp/authentication",
+              "mcp/configuration"
+            ]
+          },
+          {
+            "group": "Available Tools",
+            "pages": [
+              "mcp/tools/list-prompts",
+              "mcp/tools/get-prompt",
+              "mcp/tools/resolve-prompt",
+              "mcp/tools/search-prompts"
+            ]
+          },
+          {
+            "group": "AI Agent Integration",
+            "pages": [
+              "mcp/claude-desktop",
+              "mcp/claude-code",
+              "mcp/other-clients"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/introduction",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Database Schema",
+            "pages": [
+              "api/schema/prompts",
+              "api/schema/versions",
+              "api/schema/collections",
+              "api/schema/snapshots"
+            ]
+          },
+          {
+            "group": "Server Actions",
+            "pages": [
+              "api/actions/prompts",
+              "api/actions/search",
+              "api/actions/collections"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Two-table versioning system with immutable history",
+    "Dynamic variable resolution with {{variable}} syntax",
+    "Sub-100ms full-text search using PostgreSQL tsvector",
+    "MCP server for AI agent integration (Claude, Cursor)",
+    "Public sharing links for prompts",
+    "Collections for organizing prompts",
+    "API key management for programmatic access",
+    "Kanagawa-themed UI optimized for 400px sidecar width"
+  ],
+  "publicApiSurface": [
+    "POST /api/mcp (JSON-RPC 2.0)",
+    "list_prompts tool",
+    "get_prompt tool",
+    "resolve_prompt tool",
+    "search_prompts tool",
+    "createPrompt server action",
+    "updatePrompt server action",
+    "archivePrompt server action",
+    "searchPrompts server action",
+    "createCollection server action",
+    "createSnapshot server action",
+    "generateApiKey server action"
+  ]
+}
