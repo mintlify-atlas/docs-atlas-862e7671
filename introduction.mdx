@@ -1,0 +1,118 @@
+---
+title: Introduction to PromptRepo
+description: A high-performance, version-controlled prompt management system designed as a persistent companion to your AI development workflow.
+---
+
+# Introduction to PromptRepo
+
+PromptRepo is a **Git for Prompts** — a high-performance, version-controlled prompt management system designed to be used as a persistent "sidecar" companion to your development workflow. It features dynamic variable resolution, real-time previews, and sub-100ms full-text search.
+
+<Note>
+  PromptRepo is optimized for a 400px width layout, making it perfect as a side panel companion to your IDE or Claude Desktop.
+</Note>
+
+## What Makes PromptRepo Different?
+
+Unlike simple prompt libraries or note-taking apps, PromptRepo treats prompts as first-class versioned artifacts with:
+
+- **Immutable version history** — Never lose a working prompt again
+- **Dynamic variable resolution** — Use `{{variable}}` syntax for reusable templates
+- **Full-text search** — Find prompts in milliseconds using PostgreSQL's tsvector
+- **Direct AI agent integration** — Claude Desktop and any MCP-compatible tool can query your prompts at runtime
+- **Public sharing** — Generate read-only links for collaboration
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Version Control" icon="git-branch">
+    Two-table versioning pattern (`prompts` + `prompt_versions`) ensures every edit is preserved. View diffs, restore previous versions, and track changes over time.
+  </Card>
+  
+  <Card title="Variable Resolution" icon="brackets-curly">
+    Define reusable prompt templates with `{{variable}}` placeholders. Resolve them dynamically in the UI or via the MCP server for AI agents.
+  </Card>
+  
+  <Card title="Full-Text Search" icon="search">
+    Sub-100ms search powered by PostgreSQL `tsvector`. Press `Cmd+K` anywhere to instantly find prompts by title, description, or content.
+  </Card>
+  
+  <Card title="MCP Integration" icon="plug">
+    Expose your prompts to Claude Desktop, Claude Code, Cursor, or any MCP-compatible AI agent. No copy-paste required — agents query prompts directly.
+  </Card>
+  
+  <Card title="Public Sharing" icon="share">
+    Generate secure, read-only sharing links (`/p/[promptId]`) for collaboration. Share working prompts with teammates without requiring them to sign up.
+  </Card>
+  
+  <Card title="Collections" icon="folder">
+    Organize prompts into user-owned collections. Group by project, category, or workflow to keep your prompt library structured.
+  </Card>
+</CardGroup>
+
+## Architecture Highlights
+
+PromptRepo is built for speed, density, and reliability using modern web technologies:
+
+- **Next.js 15** — App Router, Server Actions, React Server Components
+- **Supabase** — PostgreSQL with Row-Level Security (RLS) and SSR-compatible auth
+- **Tailwind CSS 4** + **shadcn/ui** — Kanagawa theme optimized for readability
+- **Vitest** + **React Testing Library** — Comprehensive test coverage
+
+The core data model uses a **Two-Table Versioning Pattern**:
+
+```typescript
+// prompts table: HEAD metadata + latest_version_id pointer
+// prompt_versions table: immutable version history
+```
+
+Every mutation creates a new `prompt_versions` row and updates the HEAD pointer atomically. History is **append-only** and never deleted.
+
+## Who Should Use PromptRepo?
+
+<CardGroup cols={2}>
+  <Card title="AI Engineers" icon="code">
+    Build and maintain a personal prompt library with version control. Test variations, track what works, and reuse proven templates across projects.
+  </Card>
+  
+  <Card title="Teams" icon="users">
+    Share prompts via public links or MCP servers. Collaborate on prompt engineering without duplicating work or losing context.
+  </Card>
+  
+  <Card title="Researchers" icon="flask">
+    Document prompt experiments with version notes. Compare diffs between iterations and maintain reproducible prompt chains.
+  </Card>
+  
+  <Card title="Agent Developers" icon="robot">
+    Integrate PromptRepo's MCP server into your AI agents. Let agents query, search, and resolve prompts dynamically at runtime.
+  </Card>
+</CardGroup>
+
+## Use Cases
+
+### Prompt Template Library
+Store reusable prompt templates with variables like `{{language}}`, `{{framework}}`, or `{{task}}`. Resolve them on-demand in the UI or via API.
+
+### Version-Controlled Experiments
+Track prompt iterations with version notes. Compare diffs to understand what changed between v1 and v10 of a critical system prompt.
+
+### AI Agent Memory
+Expose your prompts to Claude Desktop or Cursor via the MCP server. Agents can `list_prompts`, `search_prompts`, and `resolve_prompt` without leaving their workflow.
+
+### Team Collaboration
+Generate public sharing links for read-only access. Share a working prompt with a colleague or client without requiring them to create an account.
+
+## Getting Started
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get from zero to your first working prompt in under 5 minutes.
+  </Card>
+  
+  <Card title="Installation" icon="download" href="/installation">
+    Set up PromptRepo for local development with Supabase and Next.js.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+Ready to dive in? Start with the [Quickstart](/quickstart) guide to create your first prompt, or jump to [Installation](/installation) if you want to run PromptRepo locally.

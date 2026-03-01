@@ -1,0 +1,273 @@
+---
+title: MCP Authentication
+description: Generate and manage API keys for secure MCP server access
+---
+
+## Overview
+
+PromptRepo's MCP server uses **API key authentication** to verify caller identity and enforce access control. API keys are cryptographically hashed and stored in the database — the plaintext key is shown only once during generation.
+
+<Warning>
+**Security-critical**: API keys grant full access to your private prompts. Never commit keys to Git, share them publicly, or embed them in client-side code.
+</Warning>
+
+## Generating an API Key
+
+<Steps>
+  <Step title="Navigate to Profile">
+    Log in to PromptRepo and go to `/profile` in your browser.
+  </Step>
+  
+  <Step title="Create API Key">
+    Click **"Generate New API Key"** in the API Keys section.
+  </Step>
+  
+  <Step title="Copy Key Immediately">
+    The plaintext key is displayed **once**. Copy it to a secure location (password manager, environment variable file, etc.).
+    
+    <Note>
+    Once you close the modal, the plaintext key cannot be retrieved — you'll need to generate a new one.
+    </Note>
+  </Step>
+  
+  <Step title="Store Securely">
+    Add the key to your AI client's configuration (see [Configuration](/mcp/configuration) for examples).
+  </Step>
+</Steps>
+
+## Authentication Headers
+
+When making requests to `POST /api/mcp`, include your API key in **one of two headers**:
+
+<CodeGroup>
+```http Authorization Header (Preferred)
+POST /api/mcp HTTP/1.1
+Host: your-app-url.com
+Content-Type: application/json
+Authorization: Bearer pr_live_abc123def456ghi789jkl012mno345pqr678stu901vwx234yz
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "list_prompts",
+    "arguments": { "limit": 10 }
+  }
+}
+```
+
+```http x-api-key Header (Fallback)
+POST /api/mcp HTTP/1.1
+Host: your-app-url.com
+Content-Type: application/json
+x-api-key: pr_live_abc123def456ghi789jkl012mno345pqr678stu901vwx234yz
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "get_prompt",
+    "arguments": { "prompt_id": "550e8400-e29b-41d4-a716-446655440000" }
+  }
+}
+```
+</CodeGroup>
+
+<Tip>
+Most MCP clients (Claude Desktop, Claude Code) use the `x-api-key` header by default. The `Authorization: Bearer` format is preferred for HTTP clients and SDKs.
+</Tip>
+
+## How Verification Works
+
+The authentication flow is handled in `src/app/api/mcp/route.ts`:
+
+<Steps>
+  <Step title="Extract Key from Headers">
+    The route handler reads `Authorization: Bearer <key>` or `x-api-key: <key>`.
+    
+    ```ts
+    const authHeader = request.headers.get('Authorization');
+    const xApiKeyHeader = request.headers.get('x-api-key');
+    
+    const rawKey =
+      authHeader?.startsWith('Bearer ')
+        ? authHeader.slice('Bearer '.length).trim()
+        : (xApiKeyHeader?.trim() ?? null);
+    ```
+  </Step>
+  
+  <Step title="Hash and Verify">
+    The plaintext key is hashed using SHA-256 and compared against the database:
+    
+    ```ts
+    // src/lib/api-keys/verify.ts
+    const keyHash = await hashApiKey(plaintext);
+    
+    const { data } = await supabase
+      .from('user_api_keys')
+      .select('user_id')
+      .eq('key_hash', keyHash)
+      .is('revoked_at', null)
+      .maybeSingle();
+    ```
+  </Step>
+  
+  <Step title="Set User Context">
+    If valid, the `userId` is extracted and passed to tool handlers for access control.
+    
+    If invalid or revoked, a JSON-RPC error is returned:
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "id": null,
+      "error": {
+        "code": -32001,
+        "message": "Invalid API key."
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Anonymous Access
+
+If **no API key** is provided in the request:
+
+- `userId` is set to `null`
+- All tools return **public prompts only**
+- Private prompts are inaccessible
+
+<Note>
+Anonymous access is useful for testing or read-only integrations where you only need public prompts.
+</Note>
+
+## Revoking API Keys
+
+<Steps>
+  <Step title="Go to Profile">
+    Navigate to `/profile` in your browser.
+  </Step>
+  
+  <Step title="Find the Key">
+    Locate the key in the API Keys table (identified by creation date and last 8 characters).
+  </Step>
+  
+  <Step title="Click Revoke">
+    Click **"Revoke"** to immediately invalidate the key.
+    
+    <Warning>
+    Revocation is **immediate** — any active MCP client using this key will start receiving authentication errors.
+    </Warning>
+  </Step>
+</Steps>
+
+Revoked keys cannot be un-revoked. Generate a new key if needed.
+
+## Access Control Rules
+
+Once authenticated, tool handlers enforce these access policies:
+
+| Tool | Authenticated User | Anonymous User |
+|------|-------------------|----------------|
+| `list_prompts` | Own prompts + public prompts | Public prompts only |
+| `get_prompt` | Own prompts (public/private) + others' public | Public prompts only |
+| `resolve_prompt` | Same as `get_prompt` | Public prompts only |
+| `search_prompts` | Own prompts + public prompts | Public prompts only |
+
+<Tip>
+To test access control, try calling the MCP endpoint without an API key — you should only see prompts marked as public.
+</Tip>
+
+## Security Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Environment Variables" icon="shield-halved">
+    Store API keys in environment variables or secret management tools — never hardcode them:
+    
+    ```bash
+    # .env.local (local development)
+    PROMPTREPO_API_KEY=pr_live_abc123...
+    ```
+    
+    ```json
+    // claude_desktop_config.json (reference env var)
+    {
+      "mcpServers": {
+        "my-prompts": {
+          "url": "https://app.promptrepo.dev/api/mcp",
+          "headers": {
+            "x-api-key": "${PROMPTREPO_API_KEY}"
+          }
+        }
+      }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Rotate Keys Regularly" icon="arrows-rotate">
+    Generate new keys every 90 days and revoke old ones. This limits the damage if a key is compromised.
+  </Accordion>
+  
+  <Accordion title="Use Separate Keys per Client" icon="copy">
+    Generate different API keys for each AI client (Claude Desktop, Claude Code, CI/CD) to enable granular revocation.
+  </Accordion>
+  
+  <Accordion title="Monitor Usage" icon="chart-line">
+    Check the "Last Used" timestamp in `/profile` to detect anomalies or unused keys that should be revoked.
+  </Accordion>
+</AccordionGroup>
+
+## Error Responses
+
+| Scenario | HTTP Status | JSON-RPC Error Code | Message |
+|----------|-------------|---------------------|----------|
+| No key provided | 200 | N/A | Request succeeds (anonymous access) |
+| Invalid key format | 200 | `-32001` | "Invalid API key." |
+| Revoked key | 200 | `-32001` | "Invalid API key." |
+| Unknown key | 200 | `-32001` | "Invalid API key." |
+
+<Note>
+**Why HTTP 200?** JSON-RPC 2.0 requires all responses (including errors) to use HTTP 200. Errors are transmitted inside the JSON envelope.
+</Note>
+
+## Implementation Reference
+
+API key verification is implemented in `src/lib/api-keys/verify.ts`:
+
+```ts title="src/lib/api-keys/verify.ts"
+export async function verifyApiKey(plaintext: string): Promise<VerifyApiKeyResult> {
+  let keyHash: string;
+
+  try {
+    keyHash = await hashApiKey(plaintext);
+  } catch (err) {
+    console.error('[verifyApiKey] hashing failed:', err);
+    return { valid: false };
+  }
+
+  const supabase = createServiceClient();
+
+  const { data, error } = await supabase
+    .from('user_api_keys')
+    .select('user_id')
+    .eq('key_hash', keyHash)
+    .is('revoked_at', null)
+    .maybeSingle();
+
+  if (error || !data) {
+    return { valid: false };
+  }
+
+  return { valid: true, userId: data.user_id as string };
+}
+```
+
+See `src/app/api/mcp/route.ts:71-96` for the full route handler integration.
+
+## Next Steps
+
+<Card title="Configuration" icon="gear" href="/mcp/configuration">
+  Configure Claude Desktop, Claude Code, and other MCP clients with your API key
+</Card>

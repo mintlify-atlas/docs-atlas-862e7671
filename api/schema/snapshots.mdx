@@ -1,0 +1,238 @@
+---
+title: "prompt_snapshots"
+description: "Point-in-time captures of prompts with resolved variables"
+---
+
+## Overview
+
+The `prompt_snapshots` table stores named snapshots of a specific `prompt_version` with variable values filled in. This allows users to save and reuse prompts with specific configurations (e.g., "Production API prompt" with production URL variables).
+
+## Schema
+
+<ParamField path="id" type="UUID" required>
+  Primary key. Auto-generated using `gen_random_uuid()`.
+</ParamField>
+
+<ParamField path="user_id" type="UUID" required>
+  Owner of the snapshot. References `auth.users(id)` with `ON DELETE CASCADE`.
+</ParamField>
+
+<ParamField path="prompt_version_id" type="UUID" required>
+  The specific version this snapshot is based on. References `prompt_versions(id)` with `ON DELETE CASCADE`.
+</ParamField>
+
+<ParamField path="name" type="TEXT" required>
+  Human-readable snapshot name (e.g., "Production Settings", "Testing with Mock Data").
+</ParamField>
+
+<ParamField path="variables" type="JSONB" required>
+  Key-value pairs for variable substitution. Defaults to `'{}'::jsonb` (empty object).
+  
+  Example:
+  ```json
+  {
+    "api_url": "https://api.example.com",
+    "model": "gpt-4",
+    "temperature": "0.7"
+  }
+  ```
+</ParamField>
+
+<ParamField path="created_at" type="TIMESTAMPTZ" required>
+  Creation timestamp. Defaults to `timezone('utc', now())`.
+</ParamField>
+
+<ParamField path="updated_at" type="TIMESTAMPTZ" required>
+  Last modification timestamp. Defaults to `timezone('utc', now())`. Auto-updated by `handle_updated_at()` trigger.
+</ParamField>
+
+## Indexes
+
+```sql
+CREATE INDEX idx_prompt_snapshots_user_id 
+  ON prompt_snapshots(user_id);
+
+CREATE INDEX idx_prompt_snapshots_prompt_version_id 
+  ON prompt_snapshots(prompt_version_id);
+```
+
+- **idx_prompt_snapshots_user_id**: Fast lookup of all snapshots for a user
+- **idx_prompt_snapshots_prompt_version_id**: Fast lookup of all snapshots for a specific version
+
+## Row Level Security
+
+```sql
+CREATE POLICY "Users can view their own snapshots" 
+  ON prompt_snapshots FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert their own snapshots" 
+  ON prompt_snapshots FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own snapshots" 
+  ON prompt_snapshots FOR UPDATE
+  USING (auth.uid() = user_id) 
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own snapshots" 
+  ON prompt_snapshots FOR DELETE
+  USING (auth.uid() = user_id);
+```
+
+All operations are restricted to the snapshot owner.
+
+## Relationships
+
+- **Many-to-One** with `prompt_versions`: Each snapshot references one specific version
+- **Many-to-One** with `auth.users`: Each snapshot belongs to one user
+- **Many-to-One** (indirect) with `prompts`: Via `prompt_version_id → prompt_versions.prompt_id`
+
+## Cascade Behavior
+
+- **Delete User**: Deletes all their snapshots
+- **Delete Prompt Version**: Deletes all snapshots referencing that version
+- **Delete Prompt**: Cascades to versions, then to snapshots
+
+## Variable Resolution
+
+Snapshots work with PromptRepo's resolution engine (see src/features/resolution-engine/). The engine:
+
+1. Fetches the `content` from the referenced `prompt_version`
+2. Parses placeholders like `{{variable_name}}` using src/lib/utils/variable-parser.ts
+3. Substitutes values from the `variables` JSONB field
+4. Returns the resolved prompt ready for use
+
+### Example
+
+**Prompt Version Content:**
+```
+You are an AI assistant. Use the {{model}} model with temperature {{temperature}}.
+API endpoint: {{api_url}}
+```
+
+**Snapshot Variables:**
+```json
+{
+  "model": "claude-sonnet-4",
+  "temperature": "0.3",
+  "api_url": "https://api.anthropic.com/v1/messages"
+}
+```
+
+**Resolved Output:**
+```
+You are an AI assistant. Use the claude-sonnet-4 model with temperature 0.3.
+API endpoint: https://api.anthropic.com/v1/messages
+```
+
+## Common Queries
+
+### Get All Snapshots for a User
+
+```sql
+SELECT * FROM prompt_snapshots
+WHERE user_id = auth.uid()
+ORDER BY created_at DESC;
+```
+
+### Get Snapshots for a Specific Version
+
+```sql
+SELECT * FROM prompt_snapshots
+WHERE prompt_version_id = 'version-uuid-here'
+ORDER BY name ASC;
+```
+
+### Get Snapshot with Full Version Data
+
+```sql
+SELECT 
+  ps.*,
+  pv.content AS version_content,
+  pv.version_number,
+  p.title AS prompt_title
+FROM prompt_snapshots ps
+JOIN prompt_versions pv ON ps.prompt_version_id = pv.id
+JOIN prompts p ON pv.prompt_id = p.id
+WHERE ps.id = 'snapshot-uuid-here';
+```
+
+### Create a Snapshot
+
+```sql
+INSERT INTO prompt_snapshots (
+  user_id,
+  prompt_version_id,
+  name,
+  variables
+) VALUES (
+  auth.uid(),
+  'version-uuid',
+  'Production Config',
+  '{
+    "api_url": "https://api.production.com",
+    "timeout": "30000"
+  }'::jsonb
+);
+```
+
+### Update Snapshot Variables
+
+```sql
+UPDATE prompt_snapshots
+SET variables = '{
+  "api_url": "https://api.staging.com",
+  "timeout": "10000"
+}'::jsonb
+WHERE id = 'snapshot-uuid-here'
+AND user_id = auth.uid();
+```
+
+## Triggers
+
+### Updated At
+
+```sql
+CREATE TRIGGER on_prompt_snapshots_updated
+  BEFORE UPDATE ON prompt_snapshots
+  FOR EACH ROW EXECUTE FUNCTION handle_updated_at();
+```
+
+Auto-sets `updated_at = now()` on every UPDATE.
+
+## TypeScript Types
+
+```typescript
+// src/features/snapshots/types/index.ts
+export interface PromptSnapshot {
+  id: string;
+  user_id: string;
+  prompt_version_id: string;
+  name: string;
+  variables: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateSnapshotInput {
+  prompt_version_id: string;
+  name: string;
+  variables: Record<string, string>;
+}
+```
+
+## Use Cases
+
+1. **Environment-Specific Prompts**: Save "Development", "Staging", "Production" snapshots with different API endpoints
+2. **A/B Testing**: Create snapshots with different parameter values (temperature, model, max_tokens)
+3. **Client Configurations**: Store customer-specific variable sets for the same base prompt
+4. **Quick Recall**: Save frequently-used variable combinations for one-click access
+
+## MCP Server Integration
+
+Snapshots are exposed via the Model Context Protocol (MCP) server at `/api/mcp`. The `resolve_prompt` tool can accept snapshot IDs to retrieve pre-configured variable sets. See CLAUDE.md for MCP server details.
+
+## Migration File
+
+- **20260208000004_prompt_snapshots.sql**: Table creation, indexes, triggers, and RLS policies

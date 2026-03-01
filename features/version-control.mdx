@@ -1,0 +1,309 @@
+---
+title: 'Version Control'
+description: 'Track every change to your prompts with immutable version history'
+icon: 'code-branch'
+---
+
+## Overview
+
+PromptRepo provides Git-like version control for your prompts. Every content change creates a new immutable version, allowing you to track evolution, compare changes, and restore previous versions at any time.
+
+## How Versioning Works
+
+### Immutable History
+
+PromptRepo uses an append-only versioning model:
+
+- Each content change creates a new version with an incremented version number
+- Existing versions can never be modified or deleted
+- Version numbers are sequential integers starting from 1
+- Each version is timestamped with `created_at`
+
+<Info>
+Metadata updates (title, description) do not create new versions. Only content changes trigger version creation.
+</Info>
+
+### Version Creation
+
+When you save a new version:
+
+```typescript
+const result = await saveNewVersion(promptId, {
+  content: 'Updated prompt content with {{variable}}',
+  version_note: 'Added variable support',
+});
+// Returns: { success: true, newVersion: 3 }
+```
+
+Implementation in `src/features/prompts/actions/save-new-version.ts`:
+
+```typescript
+// 1. Get current max version number
+const { data: maxVersionData } = await supabase
+  .from('prompt_versions')
+  .select('version_number')
+  .eq('prompt_id', promptId)
+  .order('version_number', { ascending: false })
+  .limit(1)
+  .single();
+
+const nextVersionNumber = (maxVersionData?.version_number ?? 0) + 1;
+
+// 2. Insert new version
+await supabase
+  .from('prompt_versions')
+  .insert({
+    prompt_id: promptId,
+    version_number: nextVersionNumber,
+    content,
+    version_note: version_note ?? '',
+  });
+
+// 3. Update parent prompt timestamp
+await supabase
+  .from('prompts')
+  .update({ updated_at: new Date().toISOString() })
+  .eq('id', promptId);
+```
+
+### Validation Rules
+
+Content must meet these requirements:
+
+- **Minimum**: 1 character (after trimming)
+- **Maximum**: 20,000 characters
+- **Version note**: Optional, max 200 characters
+
+Validation schema from `src/features/prompts/actions/save-new-version.ts:8-11`:
+
+```typescript
+const newVersionSchema = z.object({
+  content: z.string().trim().min(1).max(20000),
+  version_note: z.string().trim().max(200).optional(),
+});
+```
+
+## Viewing Version History
+
+### Fetching History
+
+Get all versions for a prompt, ordered newest to oldest:
+
+```typescript
+const versions = await getPromptHistory(promptId);
+// Returns array of PromptVersion objects
+```
+
+Each version includes:
+
+```typescript
+interface PromptVersion {
+  id: string;              // Version UUID
+  prompt_id: string;       // Parent prompt UUID
+  version_number: number;  // Sequential version (1, 2, 3...)
+  content: string;         // Full prompt content
+  version_note: string | null;  // Optional description
+  created_at: string;      // ISO timestamp
+}
+```
+
+Implementation in `src/features/prompts/queries/get-prompt-history.ts:7-23`.
+
+### Version Display
+
+Versions are typically displayed in a timeline showing:
+
+- Version number (v1, v2, v3...)
+- Creation timestamp
+- Version note (if provided)
+- Content preview or full content
+- Actions (view, restore, compare)
+
+## Restoring Versions
+
+### How Restore Works
+
+Restoring a version doesn't modify history. Instead, it creates a new version with the old content:
+
+```typescript
+const result = await restoreVersion(promptId, versionId);
+// Returns: { success: true, newVersion: 5 }
+```
+
+Implementation details from `src/features/prompts/actions/restore-version.ts:7-67`:
+
+```typescript
+// 1. Fetch the historical version
+const { data: historicalVersion } = await supabase
+  .from('prompt_versions')
+  .select('*')
+  .eq('id', versionId)
+  .eq('prompt_id', promptId)
+  .single();
+
+// 2. Get next version number
+const { data: maxVersionData } = await supabase
+  .from('prompt_versions')
+  .select('version_number')
+  .eq('prompt_id', promptId)
+  .order('version_number', { ascending: false })
+  .limit(1)
+  .single();
+
+const nextVersionNumber = (maxVersionData?.version_number || 0) + 1;
+
+// 3. Create new version with historical content
+await supabase
+  .from('prompt_versions')
+  .insert({
+    prompt_id: promptId,
+    version_number: nextVersionNumber,
+    content: historicalVersion.content,
+    version_note: `Restored from v${historicalVersion.version_number}`,
+  });
+```
+
+<Note>
+The version note automatically indicates which version was restored (e.g., "Restored from v3").
+</Note>
+
+### Why Not Modify History?
+
+PromptRepo never modifies existing versions because:
+
+1. **Audit trail**: You can see every change, including restores
+2. **Safety**: Accidental restores don't lose work
+3. **Clarity**: Version numbers always increase
+4. **Snapshots**: Snapshots reference specific versions by ID, which must remain stable
+
+## Version Comparison
+
+### Diff Utility
+
+PromptRepo includes a diff utility for comparing versions:
+
+```typescript
+import { diffStrings } from '@/features/prompts/utils/diff';
+
+const changes = diffStrings(oldContent, newContent);
+// Returns array of { type: 'add' | 'remove' | 'unchanged', text: string }
+```
+
+This can be used to:
+- Show what changed between versions
+- Highlight additions and removals
+- Display side-by-side comparisons
+
+## Database Schema
+
+### Unique Constraint
+
+Version numbers are enforced unique per prompt:
+
+```sql
+ALTER TABLE prompt_versions 
+  ADD CONSTRAINT unique_prompt_version 
+  UNIQUE (prompt_id, version_number);
+```
+
+This prevents race conditions and ensures sequential numbering.
+
+### Cascade Deletion
+
+Versions are deleted when their parent prompt is deleted:
+
+```sql
+CREATE TABLE prompt_versions (
+  prompt_id UUID REFERENCES prompts(id) ON DELETE CASCADE,
+  -- ...
+);
+```
+
+<Warning>
+Deleting a prompt permanently removes all its versions. There is no recovery mechanism.
+</Warning>
+
+## Search Integration
+
+### Version Content in Search
+
+The latest version's content is automatically indexed for search. When a new version is created, a trigger updates the search tokens:
+
+```sql
+CREATE TRIGGER tr_prompt_versions_search_update
+  AFTER INSERT ON prompt_versions
+  FOR EACH ROW EXECUTE FUNCTION update_prompt_search_tokens_trigger();
+```
+
+From `supabase/migrations/20260208000002_search_index.sql:61-64`.
+
+Search weights:
+- **Title**: Weight A (highest)
+- **Description**: Weight B (medium)
+- **Latest content**: Weight C (lower)
+
+## Best Practices
+
+<Card title="Meaningful Version Notes" icon="note-sticky">
+  Always add version notes for significant changes. Future you will appreciate the context.
+</Card>
+
+<Card title="Frequent Commits" icon="floppy-disk">
+  Create versions frequently as you iterate. Storage is cheap, and history is valuable.
+</Card>
+
+<Card title="Test Before Committing" icon="flask">
+  Test prompts with variable resolution before creating a version. Use snapshots to save test configurations.
+</Card>
+
+<Card title="Review History" icon="clock-rotate-left">
+  Periodically review version history to understand what works and what doesn't.
+</Card>
+
+## Advanced Use Cases
+
+### API Access
+
+Access version history via the MCP API:
+
+```bash
+curl -X POST https://your-app/api/mcp \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "get_prompt",
+      "arguments": { "id": "prompt-uuid" }
+    }
+  }'
+```
+
+See [MCP Overview](/mcp/overview) for details.
+
+### Snapshots with Versions
+
+Snapshots reference specific versions by `prompt_version_id`, not the prompt HEAD. This ensures:
+- Snapshots remain tied to exact content
+- Variable configurations match the prompt they were tested with
+- You can restore both content (via version) and variables (via snapshot)
+
+Learn more in [Variable Resolution](/features/variable-resolution).
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Variable Resolution" icon="brackets-curly" href="/features/variable-resolution">
+    Add dynamic variables and save test configurations
+  </Card>
+  <Card title="Public Sharing" icon="share-nodes" href="/features/public-sharing">
+    Share specific versions with others
+  </Card>
+  <Card title="Prompt Management" icon="file-lines" href="/features/prompt-management">
+    Learn about the full prompt lifecycle
+  </Card>
+  <Card title="MCP API" icon="code" href="/api-reference/mcp/overview">
+    Access versions programmatically
+  </Card>
+</CardGroup>

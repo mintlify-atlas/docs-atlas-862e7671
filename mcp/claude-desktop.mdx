@@ -1,0 +1,188 @@
+---
+title: Claude Desktop Setup
+description: Connect PromptRepo to Claude Desktop via MCP for seamless prompt access
+---
+
+Claude Desktop supports the Model Context Protocol (MCP), allowing it to query and resolve your PromptRepo prompts directly during conversations—no copy-paste required.
+
+## Prerequisites
+
+- Claude Desktop installed ([download here](https://claude.ai/download))
+- A PromptRepo deployment (local or production)
+- An API key from your PromptRepo `/profile` page
+
+## Step 1: Generate an API Key
+
+1. Navigate to your PromptRepo instance
+2. Go to **Profile** (`/profile`)
+3. Click **Create API Key**
+4. Copy the generated key (it will only be shown once)
+
+<Warning>
+Store your API key securely. Anyone with this key can access your prompts.
+</Warning>
+
+## Step 2: Locate the Configuration File
+
+Claude Desktop stores its configuration in `claude_desktop_config.json`:
+
+<CodeGroup>
+
+```bash macOS
+~/Library/Application Support/Claude/claude_desktop_config.json
+```
+
+```bash Windows
+%APPDATA%\Claude\claude_desktop_config.json
+```
+
+```bash Linux
+~/.config/Claude/claude_desktop_config.json
+```
+
+</CodeGroup>
+
+If the file doesn't exist, create it with an empty JSON object:
+
+```json
+{}
+```
+
+## Step 3: Add PromptRepo Server
+
+Edit `claude_desktop_config.json` and add the MCP server configuration:
+
+```json
+{
+  "mcpServers": {
+    "my-prompts": {
+      "url": "https://your-app-url/api/mcp",
+      "headers": {
+        "x-api-key": "YOUR_API_KEY_HERE"
+      }
+    }
+  }
+}
+```
+
+**Replace:**
+- `your-app-url` with your PromptRepo deployment URL (e.g., `promptrepo.vercel.app`)
+- `YOUR_API_KEY_HERE` with the key you generated in Step 1
+
+<Tip>
+For local development, use `http://localhost:3000/api/mcp` as the URL.
+</Tip>
+
+### Alternative: Bearer Token Authentication
+
+You can also use the `Authorization` header:
+
+```json
+{
+  "mcpServers": {
+    "my-prompts": {
+      "url": "https://your-app-url/api/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY_HERE"
+      }
+    }
+  }
+}
+```
+
+## Step 4: Restart Claude Desktop
+
+1. Quit Claude Desktop completely
+2. Relaunch the application
+3. The MCP server will be loaded automatically
+
+## Step 5: Verify Connection
+
+In a new Claude Desktop conversation, try using the MCP tools:
+
+```
+List my prompts
+```
+
+Claude will automatically invoke the `list_prompts` tool and display your PromptRepo library.
+
+## Available Tools
+
+Once connected, Claude Desktop can use these tools:
+
+| Tool | Description |
+|------|-------------|
+| `list_prompts` | Returns your prompts (or public prompts if no API key) |
+| `get_prompt` | Fetches a specific prompt by ID |
+| `resolve_prompt` | Substitutes `{{variable}}` placeholders with provided values |
+| `search_prompts` | Full-text search across your prompt library |
+
+## Example Usage
+
+### List All Prompts
+```
+Show me all my prompts
+```
+
+### Search for Prompts
+```
+Search my prompts for "code review"
+```
+
+### Resolve a Prompt with Variables
+```
+Resolve the prompt "api-documentation" with language="Python" and endpoint="/users"
+```
+
+## Troubleshooting
+
+### Claude Desktop doesn't recognize the tools
+
+**Cause:** Configuration file syntax error or incorrect location.
+
+**Fix:**
+1. Validate your JSON using a tool like [JSONLint](https://jsonlint.com/)
+2. Ensure the file is in the correct location for your OS
+3. Restart Claude Desktop after making changes
+
+### "Invalid API key" error
+
+**Cause:** The API key is incorrect, revoked, or expired.
+
+**Fix:**
+1. Generate a new API key from `/profile`
+2. Update `claude_desktop_config.json` with the new key
+3. Restart Claude Desktop
+
+### Connection timeout or network errors
+
+**Cause:** The MCP endpoint is unreachable.
+
+**Fix:**
+1. Verify your PromptRepo URL is correct and accessible
+2. If using local development, ensure the dev server is running (`npm run dev`)
+3. Check firewall settings if connecting to a self-hosted instance
+
+### Empty prompt list
+
+**Cause:** No prompts exist for your user, or you're connecting anonymously.
+
+**Fix:**
+1. Verify the API key is correctly configured
+2. Create at least one prompt in PromptRepo
+3. Check that the prompt isn't archived
+
+## Security Best Practices
+
+<Warning>
+- Never commit `claude_desktop_config.json` to version control
+- Rotate API keys regularly from the `/profile` page
+- Revoke keys immediately if compromised
+- Use environment-specific keys (separate keys for dev/prod)
+</Warning>
+
+## Next Steps
+
+- Learn how to set up [Claude Code](/mcp/claude-code)
+- Explore [other MCP-compatible clients](/mcp/other-clients)
+- Read about [API key authentication](/mcp/authentication)

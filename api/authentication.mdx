@@ -1,0 +1,394 @@
+---
+title: Authentication
+description: Session-based auth for browser users and API key auth for programmatic access
+---
+
+PromptRepo supports two authentication modes:
+
+1. **Session-based auth** — For browser users (OAuth, email/password)
+2. **API key auth** — For programmatic access (MCP endpoint)
+
+## Session-Based Authentication
+
+Browser users authenticate via Supabase Auth, which manages sessions using secure HTTP-only cookies. Sessions are automatically refreshed by the Next.js middleware.
+
+### Supported Methods
+
+- **GitHub OAuth**
+- **Google OAuth**
+- **Email + Password**
+
+### Sign-In Flow
+
+Authentication is handled by Server Actions in `src/app/auth/actions.ts`.
+
+#### GitHub OAuth
+
+```typescript title="src/app/auth/actions.ts"
+'use server';
+
+import { createClient } from '@/lib/supabase/server';
+import { cookies, headers } from 'next/headers';
+import { redirect } from 'next/navigation';
+
+export async function signInWithGithub() {
+  const cookieStore = await cookies();
+  const supabase = createClient(cookieStore);
+  const origin = (await headers()).get('origin');
+
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: 'github',
+    options: {
+      redirectTo: `${origin}/auth/callback`,
+    },
+  });
+
+  if (error) {
+    return redirect('/auth/login?error=github_auth_failed');
+  }
+
+  if (data.url) {
+    return redirect(data.url); // Redirect to GitHub OAuth page
+  }
+}
+```
+
+#### Email + Password
+
+```typescript title="src/app/auth/actions.ts"
+export async function signInWithEmail(formData: FormData) {
+  const email = formData.get('email') as string;
+  const password = formData.get('password') as string;
+  const cookieStore = await cookies();
+  const supabase = createClient(cookieStore);
+
+  const { error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
+
+  if (error) {
+    return redirect(`/auth/login?error=${encodeURIComponent(error.message)}`);
+  }
+
+  return redirect('/');
+}
+```
+
+### OAuth Callback
+
+After OAuth providers redirect back to `/auth/callback`, the route handler exchanges the code for a session:
+
+```typescript title="src/app/auth/callback/route.ts"
+import { createClient } from '@/lib/supabase/server';
+import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+
+export async function GET(request: Request) {
+  const requestUrl = new URL(request.url);
+  const code = requestUrl.searchParams.get('code');
+
+  if (code) {
+    const cookieStore = await cookies();
+    const supabase = createClient(cookieStore);
+    await supabase.auth.exchangeCodeForSession(code);
+  }
+
+  return NextResponse.redirect(`${requestUrl.origin}/`);
+}
+```
+
+### Session Refresh (Middleware)
+
+The middleware (`src/lib/supabase/middleware.ts`) automatically refreshes sessions on every request:
+
+```typescript title="src/lib/supabase/middleware.ts"
+import { createServerClient } from '@supabase/ssr';
+import { NextResponse, type NextRequest } from 'next/server';
+
+export async function updateSession(request: NextRequest) {
+  let response = NextResponse.next({
+    request: { headers: request.headers },
+  });
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() { return request.cookies.getAll(); },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(name, value)
+          );
+          response = NextResponse.next({ request: { headers: request.headers } });
+          cookiesToSet.forEach(({ name, value, options }) =>
+            response.cookies.set(name, value, options)
+          );
+        },
+      },
+    }
+  );
+
+  const { data: { user } } = await supabase.auth.getUser();
+
+  // Redirect unauthenticated users to login (except public routes)
+  if (
+    !user &&
+    !request.nextUrl.pathname.startsWith('/auth') &&
+    !request.nextUrl.pathname.startsWith('/p') && // Public sharing
+    !request.nextUrl.pathname.startsWith('/api/mcp') // MCP endpoint
+  ) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/auth/login';
+    return NextResponse.redirect(url);
+  }
+
+  return response;
+}
+```
+
+### Checking Authentication
+
+In Server Components and Server Actions, always verify the user before performing operations:
+
+```typescript
+import { createClient } from '@/lib/supabase/server';
+import { cookies } from 'next/headers';
+
+export async function myServerAction() {
+  const cookieStore = await cookies();
+  const supabase = createClient(cookieStore);
+
+  const { data: { user }, error } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { success: false, error: 'Unauthorized' };
+  }
+
+  // Proceed with authenticated operation
+  const { data } = await supabase
+    .from('prompts')
+    .select('*')
+    .eq('user_id', user.id);
+
+  return { success: true, data };
+}
+```
+
+### Sign Out
+
+```typescript title="src/app/auth/actions.ts"
+export async function signOut() {
+  const cookieStore = await cookies();
+  const supabase = createClient(cookieStore);
+  await supabase.auth.signOut();
+  return redirect('/auth/login');
+}
+```
+
+## API Key Authentication
+
+The **MCP endpoint** (`/api/mcp`) uses **API key authentication** instead of session cookies. This allows AI agents and scripts to access prompts programmatically.
+
+### API Key Structure
+
+API keys are:
+- **64-character random strings** generated with `crypto.randomBytes(32).toString('hex')`
+- **SHA-256 hashed** before storage (plaintext is never stored)
+- **Scoped to a user** (keys grant access to the owner's prompts)
+- **Revocable** (soft delete via `revoked_at` timestamp)
+
+### Creating an API Key
+
+Users create API keys from the `/profile` page. The Server Action (`src/features/api-keys/actions.ts`) generates the key, hashes it, and stores the hash:
+
+```typescript title="src/features/api-keys/actions.ts"
+'use server';
+
+import { createClient } from '@/lib/supabase/server';
+import { cookies } from 'next/headers';
+import { generateApiKey, hashApiKey } from '@/lib/api-keys/hash';
+
+export async function createApiKey(label: string) {
+  const cookieStore = await cookies();
+  const supabase = createClient(cookieStore);
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  // Generate a random 64-char key
+  const plaintext = generateApiKey();
+  const keyHash = await hashApiKey(plaintext);
+
+  // Store the hash (never the plaintext)
+  const { data: inserted, error } = await supabase
+    .from('user_api_keys')
+    .insert({
+      user_id: user.id,
+      key_hash: keyHash,
+      label,
+    })
+    .select('id, user_id, label, created_at')
+    .single();
+
+  if (error) {
+    return { success: false, error: 'Failed to create API key' };
+  }
+
+  // Return the plaintext key ONCE (it won't be shown again)
+  return {
+    success: true,
+    data: { apiKey: inserted, plaintext },
+  };
+}
+```
+
+**Important:** The plaintext key is shown to the user exactly once. It cannot be retrieved later.
+
+### Verifying an API Key
+
+The MCP route handler (`src/app/api/mcp/route.ts`) verifies API keys using the service-role client (which bypasses RLS):
+
+```typescript title="src/lib/api-keys/verify.ts"
+import { hashApiKey } from './hash';
+import { createServiceClient } from '@/lib/supabase/service';
+
+export async function verifyApiKey(plaintext: string) {
+  const keyHash = await hashApiKey(plaintext);
+  const supabase = createServiceClient();
+
+  const { data, error } = await supabase
+    .from('user_api_keys')
+    .select('user_id')
+    .eq('key_hash', keyHash)
+    .is('revoked_at', null)
+    .maybeSingle();
+
+  if (error || !data) {
+    return { valid: false };
+  }
+
+  return { valid: true, userId: data.user_id };
+}
+```
+
+### Using API Keys
+
+Clients pass API keys in one of two headers:
+
+1. **`Authorization: Bearer <key>`** (preferred)
+2. **`x-api-key: <key>`** (fallback)
+
+```typescript title="src/app/api/mcp/route.ts"
+export async function POST(request: Request) {
+  const authHeader = request.headers.get('Authorization');
+  const xApiKeyHeader = request.headers.get('x-api-key');
+
+  const rawKey =
+    authHeader?.startsWith('Bearer ')
+      ? authHeader.slice('Bearer '.length).trim()
+      : (xApiKeyHeader?.trim() ?? null);
+
+  let userId: string | null = null;
+
+  if (rawKey) {
+    const result = await verifyApiKey(rawKey);
+    if (!result.valid) {
+      return rpcError(null, MCP_ERROR_CODES.INVALID_API_KEY, 'Invalid API key.');
+    }
+    userId = result.userId;
+  }
+
+  // If no key provided, userId stays null (anonymous access)
+  // Anonymous users see only public prompts
+}
+```
+
+### Example: Calling the MCP Endpoint
+
+```bash
+curl -X POST https://your-app.com/api/mcp \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your_api_key_here" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "list_prompts"
+    },
+    "id": 1
+  }'
+```
+
+### Revoking an API Key
+
+```typescript title="src/features/api-keys/actions.ts"
+export async function revokeApiKey(keyId: string) {
+  const cookieStore = await cookies();
+  const supabase = createClient(cookieStore);
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  const { error } = await supabase
+    .from('user_api_keys')
+    .update({ revoked_at: new Date().toISOString() })
+    .eq('id', keyId)
+    .eq('user_id', user.id)
+    .is('revoked_at', null);
+
+  if (error) {
+    return { success: false, error: 'Failed to revoke API key' };
+  }
+
+  return { success: true };
+}
+```
+
+## RLS and Authentication Context
+
+**Session-based auth:** Supabase RLS policies use `auth.uid()` to identify the current user from the session cookie.
+
+**API key auth:** The MCP endpoint uses the **service-role client** to bypass RLS, then manually filters data by `user_id` after verifying the API key.
+
+```sql title="supabase/migrations/20260208000001_prompt_schema.sql"
+-- RLS policy for session-based access
+CREATE POLICY "Users can view their own prompts" ON public.prompts
+  FOR SELECT USING (auth.uid() = user_id);
+
+-- Public prompts policy (works for both session and API key auth)
+CREATE POLICY "Public prompts are readable by anyone" ON public.prompts
+  FOR SELECT USING (is_public = true);
+```
+
+For API key requests, the MCP handler queries with:
+
+```typescript
+// If userId is from API key verification:
+const { data } = await supabase
+  .from('prompts')
+  .select('*')
+  .eq('user_id', userId); // Manual filter (service-role bypasses RLS)
+
+// If no API key (anonymous):
+const { data } = await supabase
+  .from('prompts')
+  .select('*')
+  .eq('is_public', true); // Only public prompts
+```
+
+## Security Best Practices
+
+1. **Never expose service-role key to client** — Only import `createServiceClient()` in server-side code
+2. **Always verify user identity** — Check `auth.getUser()` in every Server Action
+3. **Use RLS as defense-in-depth** — Even if application logic fails, RLS enforces ownership
+4. **Hash API keys** — Store SHA-256 hashes, never plaintext
+5. **Rotate keys regularly** — Revoke and recreate API keys periodically
+6. **Limit key count** — Enforce a max of 10 active keys per user
+
+## Next Steps
+
+- [MCP Overview](/mcp/overview) — Using the Model Context Protocol endpoint
+- [API Introduction](/api/introduction) — API architecture overview
+- [Database Schema](/api/schema/prompts) — Understanding RLS policies

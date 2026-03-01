@@ -1,122 +1,117 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "PromptRepo",
+  "theme": "palm",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#7E9CD8",
+    "light": "#DCD7BA",
+    "dark": "#16161D"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/pedroid999/prompt-repo"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/pedroid999/prompt-repo"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Features",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "features/prompt-management",
+              "features/version-control",
+              "features/variable-resolution",
+              "features/collections",
+              "features/search",
+              "features/public-sharing"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Guides",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
-            ]
-          },
-          {
-            "group": "AI tools",
-            "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "guides/creating-prompts",
+              "guides/using-variables",
+              "guides/managing-collections",
+              "guides/keyboard-shortcuts"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "MCP Integration",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Setup",
             "pages": [
-              "api-reference/introduction"
+              "mcp/overview",
+              "mcp/authentication",
+              "mcp/configuration"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Available Tools",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "mcp/tools/list-prompts",
+              "mcp/tools/get-prompt",
+              "mcp/tools/resolve-prompt",
+              "mcp/tools/search-prompts"
+            ]
+          },
+          {
+            "group": "AI Agent Integration",
+            "pages": [
+              "mcp/claude-desktop",
+              "mcp/claude-code",
+              "mcp/other-clients"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/introduction",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Database Schema",
+            "pages": [
+              "api/schema/prompts",
+              "api/schema/versions",
+              "api/schema/collections",
+              "api/schema/snapshots"
+            ]
+          },
+          {
+            "group": "Server Actions",
+            "pages": [
+              "api/actions/prompts",
+              "api/actions/search",
+              "api/actions/collections"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

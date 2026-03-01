@@ -1,0 +1,604 @@
+---
+title: "Prompts Actions"
+description: "Server actions for creating, updating, and managing prompts"
+---
+
+## Overview
+
+The prompts module provides a comprehensive set of server actions for managing the complete lifecycle of prompts, including creation, versioning, archival, and metadata updates. All actions require authentication and operate within the context of the logged-in user.
+
+## savePrompt
+
+Creates a new prompt with an initial version.
+
+**Location:** `src/features/prompts/actions/save-prompt.ts:11`
+
+```typescript
+export async function savePrompt(
+  input: PromptCreateInput
+): Promise<SavePromptResult>
+```
+
+### Parameters
+
+<ParamField path="input" type="PromptCreateInput" required>
+  The prompt data to create
+
+  <ParamField path="input.title" type="string" required>
+    Prompt title (1-100 characters)
+  </ParamField>
+
+  <ParamField path="input.description" type="string">
+    Optional description (max 500 characters)
+  </ParamField>
+
+  <ParamField path="input.content" type="string" required>
+    Prompt content/template (1-20000 characters)
+  </ParamField>
+
+  <ParamField path="input.version_note" type="string">
+    Optional note for the initial version (max 200 characters)
+  </ParamField>
+</ParamField>
+
+### Returns
+
+<ResponseField name="SavePromptResult" type="object">
+  <ResponseField name="success" type="boolean" required>
+    `true` if the prompt was created successfully
+  </ResponseField>
+
+  <ResponseField name="data" type="object">
+    Returned when `success` is `true`
+    <ResponseField name="id" type="string">
+      UUID of the newly created prompt
+    </ResponseField>
+  </ResponseField>
+
+  <ResponseField name="error" type="string">
+    Returned when `success` is `false`. Error message describing what went wrong
+  </ResponseField>
+</ResponseField>
+
+### Validation
+
+Input is validated using the `promptCreateSchema` Zod schema:
+
+```typescript
+const promptCreateSchema = z.object({
+  title: z.string().trim().min(1).max(100),
+  description: z.string().trim().max(500).optional(),
+  content: z.string().trim().min(1).max(20000),
+  version_note: z.string().trim().max(200).optional(),
+});
+```
+
+### Example
+
+```typescript
+import { savePrompt } from '@/features/prompts/actions/save-prompt';
+
+const result = await savePrompt({
+  title: 'Code Review Assistant',
+  description: 'Helps review pull requests',
+  content: 'Review the following code for {{language}}:\n\n{{code}}',
+  version_note: 'Initial version',
+});
+
+if (result.success) {
+  console.log('Created prompt:', result.data.id);
+} else {
+  console.error('Failed:', result.error);
+}
+```
+
+### Behavior
+
+- Creates both a `prompts` record and an initial `prompt_versions` record (version 1)
+- Automatically assigns the authenticated user as the owner
+- If version creation fails, attempts to rollback the prompt creation
+- Returns error if user is not authenticated
+
+---
+
+## saveNewVersion
+
+Creates a new version of an existing prompt.
+
+**Location:** `src/features/prompts/actions/save-new-version.ts:17`
+
+```typescript
+export async function saveNewVersion(
+  promptId: string,
+  input: { content: string; version_note?: string }
+): Promise<SaveNewVersionResult>
+```
+
+### Parameters
+
+<ParamField path="promptId" type="string" required>
+  UUID of the prompt to create a new version for
+</ParamField>
+
+<ParamField path="input" type="object" required>
+  Version data
+
+  <ParamField path="input.content" type="string" required>
+    New prompt content (1-20000 characters)
+  </ParamField>
+
+  <ParamField path="input.version_note" type="string">
+    Optional note describing the changes (max 200 characters)
+  </ParamField>
+</ParamField>
+
+### Returns
+
+<ResponseField name="SaveNewVersionResult" type="object">
+  <ResponseField name="success" type="boolean" required>
+    `true` if the version was created successfully
+  </ResponseField>
+
+  <ResponseField name="newVersion" type="number">
+    Returned when `success` is `true`. The version number of the newly created version
+  </ResponseField>
+
+  <ResponseField name="error" type="string">
+    Returned when `success` is `false`. Error message
+  </ResponseField>
+</ResponseField>
+
+### Example
+
+```typescript
+import { saveNewVersion } from '@/features/prompts/actions/save-new-version';
+
+const result = await saveNewVersion('prompt-uuid', {
+  content: 'Updated template with {{new_variable}}',
+  version_note: 'Added support for custom variables',
+});
+
+if (result.success) {
+  console.log('Created version:', result.newVersion); // e.g., 2
+}
+```
+
+### Behavior
+
+- Automatically increments version number based on existing versions
+- Updates the parent prompt's `updated_at` timestamp
+- Revalidates the cache for the home page
+
+---
+
+## restoreVersion
+
+Restores a historical version by creating a new version with the old content.
+
+**Location:** `src/features/prompts/actions/restore-version.ts:7`
+
+```typescript
+export async function restoreVersion(
+  promptId: string,
+  versionId: string
+): Promise<{ success?: boolean; newVersion?: number; error?: string }>
+```
+
+### Parameters
+
+<ParamField path="promptId" type="string" required>
+  UUID of the prompt
+</ParamField>
+
+<ParamField path="versionId" type="string" required>
+  UUID of the historical version to restore
+</ParamField>
+
+### Returns
+
+<ResponseField name="result" type="object">
+  <ResponseField name="success" type="boolean">
+    `true` when restoration succeeds
+  </ResponseField>
+
+  <ResponseField name="newVersion" type="number">
+    The new version number created with the restored content
+  </ResponseField>
+
+  <ResponseField name="error" type="string">
+    Error message if restoration fails
+  </ResponseField>
+</ResponseField>
+
+### Example
+
+```typescript
+import { restoreVersion } from '@/features/prompts/actions/restore-version';
+
+const result = await restoreVersion(
+  'prompt-uuid',
+  'version-uuid-to-restore'
+);
+
+if (result.success) {
+  console.log('Restored as version:', result.newVersion);
+}
+```
+
+### Behavior
+
+- Fetches the content from the specified historical version
+- Creates a new version with that content and an auto-generated note: `"Restored from v{N}"`
+- Updates the prompt's `updated_at` timestamp
+- Revalidates both the prompt detail page and home page
+
+---
+
+## updatePromptMetadata
+
+Updates the title and/or description of a prompt without creating a new version.
+
+**Location:** `src/features/prompts/actions/manage-prompt.ts:96`
+
+```typescript
+export async function updatePromptMetadata(
+  promptId: string,
+  input: PromptMetadataInput
+): Promise<PromptActionResult>
+```
+
+### Parameters
+
+<ParamField path="promptId" type="string" required>
+  UUID of the prompt to update
+</ParamField>
+
+<ParamField path="input" type="PromptMetadataInput" required>
+  Metadata to update
+
+  <ParamField path="input.title" type="string" required>
+    New title (1-100 characters)
+  </ParamField>
+
+  <ParamField path="input.description" type="string">
+    New description (max 500 characters)
+  </ParamField>
+</ParamField>
+
+### Returns
+
+<ResponseField name="PromptActionResult" type="object">
+  <ResponseField name="success" type="boolean" required>
+    `true` if update succeeded
+  </ResponseField>
+
+  <ResponseField name="error" type="string">
+    Error message if update failed
+  </ResponseField>
+</ResponseField>
+
+### Example
+
+```typescript
+import { updatePromptMetadata } from '@/features/prompts/actions/manage-prompt';
+
+const result = await updatePromptMetadata('prompt-uuid', {
+  title: 'Updated Title',
+  description: 'New description',
+});
+
+if (!result.success) {
+  console.error(result.error);
+}
+```
+
+### Behavior
+
+- Validates input using `promptMetadataSchema`
+- Trims whitespace from title and description
+- Sets description to `null` if empty after trimming
+- Updates the `updated_at` timestamp
+- Revalidates the home page cache
+
+---
+
+## archivePrompt
+
+Archives a prompt (soft delete).
+
+**Location:** `src/features/prompts/actions/manage-prompt.ts:24`
+
+```typescript
+export async function archivePrompt(
+  promptId: string
+): Promise<PromptActionResult>
+```
+
+### Parameters
+
+<ParamField path="promptId" type="string" required>
+  UUID of the prompt to archive
+</ParamField>
+
+### Returns
+
+<ResponseField name="PromptActionResult" type="object">
+  <ResponseField name="success" type="boolean" required>
+    `true` if archival succeeded
+  </ResponseField>
+
+  <ResponseField name="error" type="string">
+    Error message if archival failed
+  </ResponseField>
+</ResponseField>
+
+### Example
+
+```typescript
+import { archivePrompt } from '@/features/prompts/actions/manage-prompt';
+
+const result = await archivePrompt('prompt-uuid');
+
+if (result.success) {
+  console.log('Prompt archived');
+}
+```
+
+### Behavior
+
+- Sets `archived_at` to the current timestamp
+- Only archives if the prompt is not already archived
+- Revalidates the home page cache
+
+---
+
+## restorePrompt
+
+Restores an archived prompt.
+
+**Location:** `src/features/prompts/actions/manage-prompt.ts:42`
+
+```typescript
+export async function restorePrompt(
+  promptId: string
+): Promise<PromptActionResult>
+```
+
+### Parameters
+
+<ParamField path="promptId" type="string" required>
+  UUID of the archived prompt to restore
+</ParamField>
+
+### Returns
+
+<ResponseField name="PromptActionResult" type="object">
+  <ResponseField name="success" type="boolean" required>
+    `true` if restoration succeeded
+  </ResponseField>
+
+  <ResponseField name="error" type="string">
+    Error message if restoration failed
+  </ResponseField>
+</ResponseField>
+
+### Example
+
+```typescript
+import { restorePrompt } from '@/features/prompts/actions/manage-prompt';
+
+const result = await restorePrompt('prompt-uuid');
+
+if (result.success) {
+  console.log('Prompt restored');
+}
+```
+
+### Behavior
+
+- Sets `archived_at` to `null`
+- Revalidates the home page cache
+
+---
+
+## deletePrompt
+
+Permanently deletes a prompt and all its versions.
+
+**Location:** `src/features/prompts/actions/manage-prompt.ts:59`
+
+```typescript
+export async function deletePrompt(
+  promptId: string
+): Promise<PromptActionResult>
+```
+
+### Parameters
+
+<ParamField path="promptId" type="string" required>
+  UUID of the prompt to delete
+</ParamField>
+
+### Returns
+
+<ResponseField name="PromptActionResult" type="object">
+  <ResponseField name="success" type="boolean" required>
+    `true` if deletion succeeded
+  </ResponseField>
+
+  <ResponseField name="error" type="string">
+    Error message if deletion failed
+  </ResponseField>
+</ResponseField>
+
+### Example
+
+```typescript
+import { deletePrompt } from '@/features/prompts/actions/manage-prompt';
+
+const result = await deletePrompt('prompt-uuid');
+
+if (result.success) {
+  console.log('Prompt permanently deleted');
+}
+```
+
+<Warning>
+This action is irreversible. All versions and associated data will be permanently deleted.
+</Warning>
+
+### Behavior
+
+- Permanently removes the prompt record from the database
+- Cascade deletes all associated versions (handled by database foreign key constraints)
+- Revalidates the home page cache
+
+---
+
+## togglePromptPublic
+
+Toggles the public/private visibility of a prompt.
+
+**Location:** `src/features/prompts/actions/manage-prompt.ts:76`
+
+```typescript
+export async function togglePromptPublic(
+  promptId: string,
+  isPublic: boolean
+): Promise<PromptActionResult>
+```
+
+### Parameters
+
+<ParamField path="promptId" type="string" required>
+  UUID of the prompt
+</ParamField>
+
+<ParamField path="isPublic" type="boolean" required>
+  `true` to make the prompt public, `false` to make it private
+</ParamField>
+
+### Returns
+
+<ResponseField name="PromptActionResult" type="object">
+  <ResponseField name="success" type="boolean" required>
+    `true` if the visibility update succeeded
+  </ResponseField>
+
+  <ResponseField name="error" type="string">
+    Error message if update failed
+  </ResponseField>
+</ResponseField>
+
+### Example
+
+```typescript
+import { togglePromptPublic } from '@/features/prompts/actions/manage-prompt';
+
+// Make public
+const result = await togglePromptPublic('prompt-uuid', true);
+
+if (result.success) {
+  console.log('Prompt is now public');
+}
+
+// Make private
+const result2 = await togglePromptPublic('prompt-uuid', false);
+```
+
+### Behavior
+
+- Updates the `is_public` flag on the prompt
+- Public prompts are accessible via sharing links at `/p/[promptId]`
+- Private prompts require authentication and ownership verification
+- Revalidates the home page cache
+
+---
+
+## duplicatePrompt
+
+Creates a copy of an existing prompt with all content from the latest version.
+
+**Location:** `src/features/prompts/actions/duplicate-prompt.ts:23`
+
+```typescript
+export async function duplicatePrompt(
+  promptId: string
+): Promise<DuplicatePromptResult>
+```
+
+### Parameters
+
+<ParamField path="promptId" type="string" required>
+  UUID of the prompt to duplicate
+</ParamField>
+
+### Returns
+
+<ResponseField name="DuplicatePromptResult" type="object">
+  <ResponseField name="success" type="boolean" required>
+    `true` if duplication succeeded
+  </ResponseField>
+
+  <ResponseField name="data" type="object">
+    Returned when `success` is `true`
+    <ResponseField name="id" type="string">
+      UUID of the newly created duplicate prompt
+    </ResponseField>
+  </ResponseField>
+
+  <ResponseField name="error" type="string">
+    Error message if duplication failed
+  </ResponseField>
+</ResponseField>
+
+### Example
+
+```typescript
+import { duplicatePrompt } from '@/features/prompts/actions/duplicate-prompt';
+
+const result = await duplicatePrompt('prompt-uuid');
+
+if (result.success) {
+  console.log('Created duplicate:', result.data.id);
+  // Redirect to edit the new prompt
+  router.push(`/prompts/${result.data.id}`);
+}
+```
+
+### Behavior
+
+- Fetches the source prompt's latest version content
+- Creates a new prompt with title prefixed by `"Copy of "`
+- Copies the description unchanged
+- Creates version 1 with the content from the source prompt's latest version
+- The duplicate is owned by the current user (even if duplicating someone else's public prompt)
+- If version creation fails, rolls back the prompt creation
+- Revalidates the home page cache
+
+---
+
+## Authentication
+
+All actions require an authenticated user session. They use the `requireUser()` helper or manual authentication checks:
+
+```typescript
+const { data: { user }, error } = await supabase.auth.getUser();
+if (error || !user) {
+  return { success: false, error: 'Unauthorized' };
+}
+```
+
+## Error Handling
+
+Actions follow a consistent error handling pattern:
+
+- Return objects with `success` boolean flag
+- On success: include `data` or relevant result fields
+- On failure: include `error` string with human-readable message
+- Database errors are caught and logged to console
+- Validation errors from Zod are transformed into user-friendly messages
+
+## Cache Revalidation
+
+Most mutating actions call `revalidatePath('/')` to invalidate Next.js cache and ensure the UI reflects changes immediately. Some actions revalidate specific paths like `/prompts/${promptId}`.

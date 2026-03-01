@@ -1,0 +1,452 @@
+---
+title: 'Search'
+description: 'Find prompts instantly with PostgreSQL full-text search'
+icon: 'magnifying-glass'
+---
+
+## Overview
+
+PromptRepo uses PostgreSQL's built-in full-text search capabilities with `tsvector` indexing to provide fast, relevant search results across your prompts. Search queries scan titles, descriptions, and prompt content with intelligent ranking.
+
+## How Search Works
+
+### Full-Text Search Engine
+
+PromptRepo uses PostgreSQL's `tsvector` type for search, which provides:
+
+- **Stemming**: Searches for "running" also match "run" and "runs"
+- **Stop word removal**: Common words like "the", "a", "is" are ignored
+- **Ranking**: Results are ordered by relevance using `ts_rank`
+- **Prefix matching**: Search-as-you-type with partial word matching
+- **Language-aware**: Uses English dictionary by default
+
+### Search Tokens Column
+
+Every prompt has a `search_tokens` column that combines:
+
+```sql
+ALTER TABLE prompts ADD COLUMN search_tokens tsvector;
+CREATE INDEX idx_prompts_search_tokens ON prompts USING GIN(search_tokens);
+```
+
+From `supabase/migrations/20260208000002_search_index.sql:1-5`.
+
+### Automatic Index Updates
+
+Search tokens are automatically updated via triggers when:
+
+1. A prompt's title or description changes
+2. A new version is created (updates content)
+
+Implementation from `supabase/migrations/20260208000002_search_index.sql:17-64`:
+
+```sql
+CREATE FUNCTION update_prompt_search_tokens_trigger()
+RETURNS TRIGGER AS $$
+DECLARE
+  p_title TEXT;
+  p_description TEXT;
+  p_content TEXT;
+  p_id UUID;
+BEGIN
+  IF TG_TABLE_NAME = 'prompts' THEN
+    p_id := NEW.id;
+    p_title := NEW.title;
+    p_description := NEW.description;
+    p_content := get_latest_prompt_content(p_id);
+    
+    NEW.search_tokens := (
+      setweight(to_tsvector('english', COALESCE(p_title, '')), 'A') ||
+      setweight(to_tsvector('english', COALESCE(p_description, '')), 'B') ||
+      setweight(to_tsvector('english', COALESCE(p_content, '')), 'C')
+    );
+    RETURN NEW;
+  ELSIF TG_TABLE_NAME = 'prompt_versions' THEN
+    -- Update parent prompt's search_tokens when new version is created
+    p_id := NEW.prompt_id;
+    SELECT title, description INTO p_title, p_description 
+    FROM prompts WHERE id = p_id;
+    p_content := NEW.content;
+    
+    UPDATE prompts
+    SET search_tokens = (
+      setweight(to_tsvector('english', COALESCE(p_title, '')), 'A') ||
+      setweight(to_tsvector('english', COALESCE(p_description, '')), 'B') ||
+      setweight(to_tsvector('english', COALESCE(p_content, '')), 'C')
+    )
+    WHERE id = p_id;
+    RETURN NEW;
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+### Search Weights
+
+Fields are weighted by importance:
+
+- **Title (Weight A)**: Highest priority - matches in titles rank highest
+- **Description (Weight B)**: Medium priority - contextual information
+- **Content (Weight C)**: Lower priority - searchable but ranked below metadata
+
+This means a prompt titled "Customer Support" will rank higher than one that merely mentions "customer support" in the content.
+
+## Using Search
+
+### Basic Search
+
+Search across all your prompts:
+
+```typescript
+import { searchPrompts } from '@/features/search/actions';
+
+const { data, error } = await searchPrompts('customer email template');
+```
+
+Implementation from `src/features/search/actions.ts:15-47`:
+
+```typescript
+export async function searchPrompts(
+  query: string,
+  options?: { userId?: string; collectionId?: string; archived?: boolean },
+) {
+  const supabase = createClient(cookieStore);
+
+  if (!query || query.trim() === '') {
+    return { data: [], error: null };
+  }
+
+  const validation = searchSchema.safeParse({ query, ...options });
+  if (!validation.success) {
+    return { data: null, error: 'Invalid search query or parameters' };
+  }
+
+  const { data, error } = await supabase.rpc('search_prompts', {
+    query_text: query,
+    filter_user_id: options?.userId || null,
+    filter_collection_id: options?.collectionId || null,
+    filter_archived: typeof options?.archived === 'boolean' ? options.archived : null,
+  });
+
+  if (error) {
+    console.error('Search error:', error);
+    return { data: null, error: `Search failed: ${error.message}` };
+  }
+
+  return { data: data as SearchResult[], error: null };
+}
+```
+
+### Search Validation
+
+Queries must meet these requirements:
+
+```typescript
+const searchSchema = z.object({
+  query: z.string().min(1).max(500),
+  userId: z.string().uuid().optional(),
+  collectionId: z.string().uuid().optional(),
+  archived: z.boolean().optional(),
+});
+```
+
+From `src/features/search/actions.ts:8-13`.
+
+### Search Results
+
+Each result includes:
+
+```typescript
+interface SearchResult {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string | null;
+  archived_at: string | null;
+  is_public: boolean;
+  created_at: string;
+  updated_at: string;
+  latest_content: string;
+  latest_version_id: string;
+  collection_ids: string[];
+  rank: number;  // Relevance score (higher = better match)
+}
+```
+
+From `src/features/search/types.ts:1-14`.
+
+Results are automatically ordered by `rank` (highest first).
+
+## Search Filters
+
+### Filter by User
+
+Search only a specific user's prompts (useful for admin interfaces):
+
+```typescript
+const { data } = await searchPrompts('api', {
+  userId: 'user-uuid',
+});
+```
+
+### Filter by Collection
+
+Search within a specific collection:
+
+```typescript
+const { data } = await searchPrompts('template', {
+  collectionId: 'collection-uuid',
+});
+```
+
+Implementation from `supabase/migrations/20260208000005_update_search_rpc.sql:56-59`:
+
+```sql
+AND (filter_collection_id IS NULL OR EXISTS (
+  SELECT 1 FROM collection_prompts cp 
+  WHERE cp.prompt_id = p.id AND cp.collection_id = filter_collection_id
+))
+```
+
+### Filter by Archive Status
+
+Include or exclude archived prompts:
+
+```typescript
+// Only archived prompts
+const { data } = await searchPrompts('old', {
+  archived: true,
+});
+
+// Only active prompts (default behavior)
+const { data } = await searchPrompts('active', {
+  archived: false,
+});
+
+// All prompts (omit the filter)
+const { data } = await searchPrompts('all');
+```
+
+## Database Search Function
+
+### RPC Function
+
+Search is implemented as a PostgreSQL function from `supabase/migrations/20260208000005_update_search_rpc.sql:14-62`:
+
+```sql
+CREATE FUNCTION search_prompts(
+  query_text TEXT,
+  filter_user_id UUID DEFAULT NULL,
+  filter_collection_id UUID DEFAULT NULL,
+  filter_archived BOOLEAN DEFAULT NULL
+)
+RETURNS TABLE (
+  id UUID,
+  user_id UUID,
+  title TEXT,
+  description TEXT,
+  created_at TIMESTAMP WITH TIME ZONE,
+  updated_at TIMESTAMP WITH TIME ZONE,
+  latest_content TEXT,
+  latest_version_id UUID,
+  rank REAL
+) AS $$
+DECLARE
+  search_query tsquery;
+BEGIN
+  -- Handle empty query
+  IF query_text IS NULL OR trim(query_text) = '' THEN
+    RETURN;
+  END IF;
+
+  -- Create prefix-matching query
+  SELECT string_agg(lexeme || ':*', ' & ')::tsquery INTO search_query
+  FROM unnest(to_tsvector('english', query_text));
+
+  RETURN QUERY
+  SELECT
+    p.id,
+    p.user_id,
+    p.title,
+    p.description,
+    p.created_at,
+    p.updated_at,
+    get_latest_prompt_content(p.id) as latest_content,
+    get_latest_prompt_version_id(p.id) as latest_version_id,
+    ts_rank(p.search_tokens, search_query) as rank
+  FROM prompts p
+  WHERE p.search_tokens @@ search_query
+  AND (filter_user_id IS NULL OR p.user_id = filter_user_id)
+  AND (filter_collection_id IS NULL OR EXISTS (
+    SELECT 1 FROM collection_prompts cp 
+    WHERE cp.prompt_id = p.id AND cp.collection_id = filter_collection_id
+  ))
+  AND (filter_archived IS NULL OR 
+       (filter_archived = true AND p.archived_at IS NOT NULL) OR
+       (filter_archived = false AND p.archived_at IS NULL))
+  ORDER BY rank DESC;
+END;
+$$ LANGUAGE plpgsql STABLE;
+```
+
+### Prefix Matching
+
+The search function uses prefix matching to support search-as-you-type:
+
+```sql
+SELECT string_agg(lexeme || ':*', ' & ')::tsquery INTO search_query
+FROM unnest(to_tsvector('english', query_text));
+```
+
+This transforms:
+- `"custom"` → `'custom:*'` (matches "customer", "customize", "customization")
+- `"email temp"` → `'email:* & temp:*'` (matches "email template", "emails temporarily")
+
+## UI Components
+
+### Command Palette
+
+PromptRepo includes a `Cmd+K` command palette for quick search:
+
+- **Trigger**: `Cmd+K` (Mac) or `Ctrl+K` (Windows/Linux)
+- **Real-time**: Results update as you type
+- **Navigation**: Arrow keys to browse, Enter to open
+- **Keyboard-first**: Built for speed
+
+Implementation in `src/components/features/search/command-palette.tsx`.
+
+### Search Bar
+
+A dedicated search bar component for embedding in pages:
+
+- Debounced input to reduce API calls
+- Loading states
+- Empty state handling
+- Result highlighting
+
+Implementation in `src/components/features/search/search-bar.tsx`.
+
+## Performance
+
+### GIN Index
+
+The GIN (Generalized Inverted Index) on `search_tokens` provides:
+
+- **Fast lookups**: Constant-time token matching
+- **Scalability**: Efficient even with thousands of prompts
+- **Compact storage**: Compressed index structure
+
+```sql
+CREATE INDEX idx_prompts_search_tokens 
+  ON prompts USING GIN(search_tokens);
+```
+
+### Query Optimization
+
+The search function is marked `STABLE`, allowing PostgreSQL to:
+
+- Cache results within a transaction
+- Optimize execution plans
+- Parallelize when beneficial
+
+## Limitations
+
+<Warning>
+**Language-specific**: Currently uses English dictionary only. Non-English text may not stem correctly.
+</Warning>
+
+<Warning>
+**No phrase search**: Multi-word queries are treated as AND operations, not exact phrases.
+</Warning>
+
+<Warning>
+**Stop words ignored**: Common words like "the", "and", "is" don't affect search results.
+</Warning>
+
+## Best Practices
+
+<Card title="Descriptive Titles" icon="heading">
+  Put important keywords in prompt titles. They have the highest search weight.
+</Card>
+
+<Card title="Rich Descriptions" icon="align-left">
+  Use descriptions to add searchable context that doesn't belong in the title.
+</Card>
+
+<Card title="Consistent Terminology" icon="spell-check">
+  Use consistent terms across prompts to improve findability (e.g., always "customer" not sometimes "client").
+</Card>
+
+<Card title="Variable Names Matter" icon="tag">
+  Variable names in content are searchable. Use descriptive names like `{{customer_name}}` instead of `{{x}}`.
+</Card>
+
+## Advanced Use Cases
+
+### Search in MCP API
+
+The MCP server exposes a `search_prompts` tool:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "search_prompts",
+    "arguments": {
+      "query": "customer support"
+    }
+  }
+}
+```
+
+See implementation in `src/features/mcp/tools/search-prompts.ts`.
+
+### Programmatic Search
+
+Build custom search interfaces using the Server Action:
+
+```typescript
+// Search with multiple filters
+const results = await searchPrompts('api documentation', {
+  collectionId: engineeringCollectionId,
+  archived: false,
+});
+
+// Display results with custom UI
+results.data?.forEach(result => {
+  console.log(`${result.title} (rank: ${result.rank})`);
+});
+```
+
+### Analytics
+
+Track common search terms to understand usage patterns:
+
+```typescript
+// Log searches for analytics
+async function logSearch(userId: string, query: string) {
+  await supabase.from('search_logs').insert({
+    user_id: userId,
+    query,
+    timestamp: new Date().toISOString(),
+  });
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Collections" icon="folder" href="/features/collections">
+    Organize prompts to narrow search scope
+  </Card>
+  <Card title="Prompt Management" icon="file-lines" href="/features/prompt-management">
+    Learn about prompt metadata and lifecycle
+  </Card>
+  <Card title="MCP Search" icon="code" href="/api-reference/mcp/tools/search-prompts">
+    Search prompts programmatically via API
+  </Card>
+  <Card title="Variables" icon="brackets-curly" href="/features/variable-resolution">
+    Search by variable names in content
+  </Card>
+</CardGroup>

@@ -1,0 +1,230 @@
+---
+title: "collections"
+description: "User-owned groupings of prompts with many-to-many relationships"
+---
+
+## Overview
+
+The `collections` table allows users to organize prompts into named groups. A prompt can belong to multiple collections, and a collection can contain multiple prompts, implemented via the `collection_prompts` join table.
+
+## collections Table
+
+### Schema
+
+<ParamField path="id" type="UUID" required>
+  Primary key. Auto-generated using `gen_random_uuid()`.
+</ParamField>
+
+<ParamField path="user_id" type="UUID" required>
+  Owner of the collection. References `auth.users(id)` with `ON DELETE CASCADE`.
+</ParamField>
+
+<ParamField path="name" type="TEXT" required>
+  Collection name. Must be unique per user (enforced by `collections_user_id_name_key` constraint).
+</ParamField>
+
+<ParamField path="description" type="TEXT">
+  Optional collection description.
+</ParamField>
+
+<ParamField path="created_at" type="TIMESTAMPTZ" required>
+  Creation timestamp. Defaults to `now()`.
+</ParamField>
+
+<ParamField path="updated_at" type="TIMESTAMPTZ" required>
+  Last modification timestamp. Defaults to `now()`. (Note: No auto-update trigger defined in migration.)
+</ParamField>
+
+### Constraints
+
+```sql
+ALTER TABLE collections 
+ADD CONSTRAINT collections_user_id_name_key 
+UNIQUE (user_id, name);
+```
+
+Each user can have only one collection with a given name (e.g., "Favorites", "Work Prompts").
+
+### Row Level Security
+
+```sql
+CREATE POLICY "Users can view their own collections"
+  ON collections FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert their own collections"
+  ON collections FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own collections"
+  ON collections FOR UPDATE
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own collections"
+  ON collections FOR DELETE
+  USING (auth.uid() = user_id);
+```
+
+All operations are restricted to the collection owner.
+
+## collection_prompts Join Table
+
+### Schema
+
+<ParamField path="collection_id" type="UUID" required>
+  References `collections(id)` with `ON DELETE CASCADE`.
+</ParamField>
+
+<ParamField path="prompt_id" type="UUID" required>
+  References `prompts(id)` with `ON DELETE CASCADE`.
+</ParamField>
+
+<ParamField path="added_at" type="TIMESTAMPTZ" required>
+  Timestamp when the prompt was added to the collection. Defaults to `now()`.
+</ParamField>
+
+### Constraints
+
+```sql
+ALTER TABLE collection_prompts 
+ADD PRIMARY KEY (collection_id, prompt_id);
+```
+
+Composite primary key prevents duplicate entries. A prompt can be added to a collection only once.
+
+### Indexes
+
+```sql
+CREATE INDEX idx_collection_prompts_prompt_id 
+  ON collection_prompts(prompt_id);
+
+CREATE INDEX idx_collection_prompts_collection_id 
+  ON collection_prompts(collection_id);
+```
+
+- **idx_collection_prompts_prompt_id**: Fast lookup of all collections containing a prompt
+- **idx_collection_prompts_collection_id**: Fast lookup of all prompts in a collection
+
+### Row Level Security
+
+```sql
+CREATE POLICY "Users can view entries in their collections"
+  ON collection_prompts FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM collections c
+      WHERE c.id = collection_id
+      AND c.user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can add entries to their collections"
+  ON collection_prompts FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM collections c
+      WHERE c.id = collection_id
+      AND c.user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can remove entries from their collections"
+  ON collection_prompts FOR DELETE
+  USING (
+    EXISTS (
+      SELECT 1 FROM collections c
+      WHERE c.id = collection_id
+      AND c.user_id = auth.uid()
+    )
+  );
+```
+
+All policies verify ownership via the parent `collections` table. No UPDATE policy (entries are immutable once added; remove and re-add to change `added_at`).
+
+## Relationships
+
+- **Many-to-One** with `auth.users`: Each collection belongs to one user
+- **Many-to-Many** with `prompts`: Collections can contain multiple prompts, and prompts can be in multiple collections
+
+## Cascade Behavior
+
+- **Delete User**: Deletes all their collections and associated `collection_prompts` entries
+- **Delete Collection**: Deletes all `collection_prompts` entries for that collection
+- **Delete Prompt**: Removes prompt from all collections (deletes `collection_prompts` rows)
+
+## Common Queries
+
+### Get All Collections for a User
+
+```sql
+SELECT * FROM collections
+WHERE user_id = auth.uid()
+ORDER BY name ASC;
+```
+
+### Get All Prompts in a Collection
+
+```sql
+SELECT p.*, cp.added_at
+FROM prompts p
+JOIN collection_prompts cp ON p.id = cp.prompt_id
+WHERE cp.collection_id = 'collection-uuid-here'
+ORDER BY cp.added_at DESC;
+```
+
+### Get All Collections for a Prompt
+
+```sql
+SELECT c.*, cp.added_at
+FROM collections c
+JOIN collection_prompts cp ON c.id = cp.collection_id
+WHERE cp.prompt_id = 'prompt-uuid-here'
+ORDER BY c.name ASC;
+```
+
+### Add Prompt to Collection
+
+```sql
+INSERT INTO collection_prompts (collection_id, prompt_id)
+VALUES ('collection-uuid', 'prompt-uuid');
+```
+
+### Remove Prompt from Collection
+
+```sql
+DELETE FROM collection_prompts
+WHERE collection_id = 'collection-uuid'
+AND prompt_id = 'prompt-uuid';
+```
+
+## Search Integration
+
+The `search_prompts()` RPC function accepts a `filter_collection_id` parameter:
+
+```sql
+SELECT * FROM search_prompts(
+  query_text := 'authentication',
+  filter_user_id := auth.uid(),
+  filter_collection_id := 'collection-uuid-here'
+);
+```
+
+See supabase/migrations/20260208000002_search_index.sql:67 for implementation.
+
+## TypeScript Types
+
+```typescript
+// src/features/collections/types.ts
+export type Collection = {
+  id: string;
+  name: string;
+  description: string | null;
+};
+
+// Note: Type does not include user_id, created_at, updated_at.
+// These fields may be omitted in client-facing APIs.
+```
+
+## Migration File
+
+- **20260208000003_collections.sql**: Table creation, indexes, and RLS policies

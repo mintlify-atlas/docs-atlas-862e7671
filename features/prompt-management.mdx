@@ -1,0 +1,217 @@
+---
+title: 'Prompt Management'
+description: 'Create, organize, and manage your AI prompts with PromptRepo'
+icon: 'file-lines'
+---
+
+## Overview
+
+PromptRepo provides a comprehensive system for managing your AI prompts with full CRUD operations, metadata management, and lifecycle controls. Every prompt you create is automatically tracked and version-controlled.
+
+## Creating Prompts
+
+### Basic Creation
+
+Create a new prompt by providing:
+
+- **Title** (required): A descriptive name for your prompt (max 100 characters)
+- **Description** (optional): Additional context about the prompt's purpose (max 500 characters)
+- **Content** (required): The actual prompt text (max 20,000 characters)
+- **Version Note** (optional): A note describing the initial version (max 200 characters)
+
+<Note>
+Every prompt starts at version 1. A new entry is created in both the `prompts` table (HEAD state) and `prompt_versions` table (immutable history).
+</Note>
+
+### Implementation Details
+
+When you create a prompt, PromptRepo performs an atomic two-step operation:
+
+```typescript
+// 1. Insert into prompts table (HEAD state)
+const { data: promptData } = await supabase
+  .from('prompts')
+  .insert({
+    title,
+    description,
+    user_id: user.id,
+  })
+  .select('id')
+  .single();
+
+// 2. Insert into prompt_versions table (immutable history)
+const { error: versionError } = await supabase
+  .from('prompt_versions')
+  .insert({
+    prompt_id: promptData.id,
+    version_number: 1,
+    content,
+    version_note,
+  });
+```
+
+See the full implementation in `src/features/prompts/actions/save-prompt.ts:30-66`.
+
+<Warning>
+If version creation fails, the system automatically rolls back the prompt creation to maintain data consistency.
+</Warning>
+
+## Updating Prompts
+
+### Metadata Updates
+
+You can update a prompt's title and description without creating a new version:
+
+```typescript
+await updatePromptMetadata(promptId, {
+  title: 'Updated Title',
+  description: 'Updated description',
+});
+```
+
+This updates only the HEAD state in the `prompts` table and sets `updated_at` to the current timestamp.
+
+### Content Updates
+
+Content changes always create a new version. See [Version Control](/features/version-control) for details.
+
+## Prompt Lifecycle
+
+### Archive
+
+Archive prompts you're not actively using without deleting them:
+
+```typescript
+await archivePrompt(promptId);
+```
+
+This sets the `archived_at` timestamp. Archived prompts are:
+- Hidden from the main prompt list by default
+- Excluded from search results (unless explicitly filtered)
+- Still accessible via direct URL or API
+- Fully restorable
+
+Implementation in `src/features/prompts/actions/manage-prompt.ts:24-40`.
+
+### Restore
+
+Unarchive a prompt to return it to active use:
+
+```typescript
+await restorePrompt(promptId);
+```
+
+This sets `archived_at` to `null`, making the prompt visible again in all lists and searches.
+
+### Delete
+
+Permanently delete a prompt and all its versions:
+
+```typescript
+await deletePrompt(promptId);
+```
+
+<Warning>
+Deletion is permanent and cannot be undone. All versions, snapshots, and collection associations are also deleted due to cascade constraints.
+</Warning>
+
+## Data Model
+
+### Two-Table Versioning
+
+PromptRepo uses a sophisticated two-table architecture:
+
+#### prompts Table (HEAD State)
+
+Stores the current state and metadata:
+
+```sql
+CREATE TABLE prompts (
+  id UUID PRIMARY KEY,
+  user_id UUID REFERENCES profiles(id),
+  title TEXT NOT NULL,
+  description TEXT,
+  archived_at TIMESTAMP,
+  is_public BOOLEAN DEFAULT false,
+  created_at TIMESTAMP,
+  updated_at TIMESTAMP,
+  search_tokens tsvector  -- For full-text search
+);
+```
+
+#### prompt_versions Table (Immutable History)
+
+Stores all content versions:
+
+```sql
+CREATE TABLE prompt_versions (
+  id UUID PRIMARY KEY,
+  prompt_id UUID REFERENCES prompts(id) ON DELETE CASCADE,
+  version_number INT NOT NULL,
+  content TEXT NOT NULL,
+  version_note TEXT,
+  created_at TIMESTAMP,
+  UNIQUE(prompt_id, version_number)
+);
+```
+
+<Info>
+Version numbers are always incremental integers starting from 1. The `prompt_versions` table is append-only - existing versions cannot be modified or deleted.
+</Info>
+
+## Security
+
+### Row Level Security (RLS)
+
+All prompt operations are protected by PostgreSQL RLS policies:
+
+```sql
+-- Users can only view their own prompts
+CREATE POLICY "Users can view their own prompts" 
+  ON prompts FOR SELECT 
+  USING (auth.uid() = user_id);
+
+-- Users can only modify their own prompts
+CREATE POLICY "Users can update their own prompts" 
+  ON prompts FOR UPDATE 
+  USING (auth.uid() = user_id);
+```
+
+Version history inherits these policies through the `prompt_id` foreign key relationship.
+
+See the full schema in `supabase/migrations/20260208000001_prompt_schema.sql`.
+
+## Best Practices
+
+<Card title="Descriptive Titles" icon="heading">
+  Use clear, searchable titles that describe the prompt's purpose. Titles are weighted highest in search results.
+</Card>
+
+<Card title="Version Notes" icon="note-sticky">
+  Add version notes when making significant changes. This helps you understand your prompt's evolution over time.
+</Card>
+
+<Card title="Archive vs Delete" icon="box-archive">
+  Prefer archiving over deletion to preserve history. Delete only when you're certain you won't need the prompt or its versions.
+</Card>
+
+<Card title="Metadata Organization" icon="tags">
+  Use descriptions to add searchable keywords and context. Descriptions have medium weight in search ranking.
+</Card>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Version Control" icon="code-branch" href="/features/version-control">
+    Learn how to track changes and restore previous versions
+  </Card>
+  <Card title="Collections" icon="folder" href="/features/collections">
+    Organize prompts into collections for better management
+  </Card>
+  <Card title="Search" icon="magnifying-glass" href="/features/search">
+    Discover how to find prompts quickly with full-text search
+  </Card>
+  <Card title="Variables" icon="brackets-curly" href="/features/variable-resolution">
+    Add dynamic variables to your prompts
+  </Card>
+</CardGroup>

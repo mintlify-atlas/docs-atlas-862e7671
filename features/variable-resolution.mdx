@@ -1,0 +1,404 @@
+---
+title: 'Variable Resolution'
+description: 'Use dynamic variables in prompts with {{variable}} syntax and save test configurations as snapshots'
+icon: 'brackets-curly'
+---
+
+## Overview
+
+Variables make prompts reusable by allowing you to define placeholders that get filled in at runtime. PromptRepo uses a simple `{{variable}}` syntax and includes a resolution engine for testing and deploying prompts with different values.
+
+## Variable Syntax
+
+### Basic Format
+
+Variables use double curly braces:
+
+```text
+You are a {{role}} helping with {{task}}.
+Please {{action}} the following:
+
+{{content}}
+```
+
+This prompt has four variables: `role`, `task`, `action`, and `content`.
+
+### Syntax Rules
+
+- **Pattern**: `{{variable_name}}`
+- **Names**: Can contain letters, numbers, underscores, spaces, and special characters
+- **Whitespace**: Spaces inside braces are trimmed (`{{ name }}` becomes `name`)
+- **Case-sensitive**: `{{User}}` and `{{user}}` are different variables
+- **Multiline**: Variables can appear across multiple lines
+
+<Warning>
+Nested braces are not supported. `{{ {{var}} }}` will be parsed as a variable named `{{var}}`.
+</Warning>
+
+## Variable Parser
+
+### Extracting Variables
+
+The variable parser scans prompt content and extracts unique variable names:
+
+```typescript
+import { extractVariables } from '@/lib/utils/variable-parser';
+
+const content = 'Hello {{name}}, your role is {{role}}. {{name}} is great!';
+const variables = extractVariables(content);
+// Returns: ['name', 'role']
+```
+
+Implementation from `src/lib/utils/variable-parser.ts:13-31`:
+
+```typescript
+export const VARIABLE_REGEX = /\{\{\s*([^}]+?)\s*\}\}/g;
+
+export function extractVariables(content: string): string[] {
+  if (!content) return [];
+
+  const matches = new Set<string>();
+  let match;
+
+  VARIABLE_REGEX.lastIndex = 0;
+
+  while ((match = VARIABLE_REGEX.exec(content)) !== null) {
+    const variableName = match[1].trim();
+    if (variableName) {
+      matches.add(variableName);
+    }
+  }
+
+  return [...matches];
+}
+```
+
+<Info>
+The regex uses non-greedy matching (`[^}]+?`) to avoid capturing content beyond the closing braces.
+</Info>
+
+### Resolving Variables
+
+Replace variables with actual values:
+
+```typescript
+import { resolvePrompt } from '@/lib/utils/variable-parser';
+
+const template = 'Hello {{name}}, you are a {{role}}.';
+const values = {
+  name: 'Alice',
+  role: 'developer',
+};
+
+const resolved = resolvePrompt(template, values);
+// Returns: 'Hello Alice, you are a developer.'
+```
+
+Implementation from `src/lib/utils/variable-parser.ts:49-73`:
+
+```typescript
+export function resolvePrompt(
+  content: string, 
+  values: Record<string, string>
+): string {
+  if (!content) return "";
+  
+  VARIABLE_REGEX.lastIndex = 0;
+  
+  return content.replace(VARIABLE_REGEX, (match, variableName) => {
+    const trimmedName = variableName.trim();
+    const value = values[trimmedName];
+    
+    // If value is defined (including empty string or 0), use it.
+    // Otherwise return the original placeholder.
+    return value !== undefined ? value : match;
+  });
+}
+```
+
+<Note>
+If a variable is not provided in the values object, the original placeholder remains unchanged (e.g., `{{missing}}` stays as `{{missing}}`).
+</Note>
+
+## Resolution Engine
+
+### User Workflow
+
+The resolution engine provides an interactive form for testing prompts:
+
+1. View a prompt with variables
+2. Fill in the resolution form with test values
+3. See the resolved output in real-time
+4. Save successful configurations as snapshots
+5. Load snapshots to re-test or iterate
+
+### Hydration
+
+When loading a snapshot, the resolution form is hydrated with saved variable values:
+
+```typescript
+import { hydrateResolutionForm } from '@/features/resolution-engine/utils/hydration';
+
+const extractedVariables = ['name', 'role', 'task'];
+const snapshotVariables = { name: 'Alice', role: 'developer' };
+
+const formValues = hydrateResolutionForm(
+  extractedVariables, 
+  snapshotVariables
+);
+// Returns: { name: 'Alice', role: 'developer', task: '' }
+```
+
+Implementation from `src/features/resolution-engine/utils/hydration.ts:8-19`:
+
+```typescript
+export function hydrateResolutionForm(
+  extractedVariables: string[],
+  snapshotVariables?: Record<string, string>
+): Record<string, string> {
+  const result: Record<string, string> = {};
+
+  extractedVariables.forEach((variable) => {
+    result[variable] = snapshotVariables?.[variable] ?? '';
+  });
+
+  return result;
+}
+```
+
+Variables present in the current prompt but not in the snapshot are initialized to empty strings.
+
+## Snapshots
+
+### What Are Snapshots?
+
+Snapshots are saved configurations of variable values tied to a specific prompt version. They allow you to:
+
+- Save working test cases
+- Document example use cases
+- Share configurations with team members
+- Quickly reproduce specific scenarios
+
+### Snapshot Schema
+
+```typescript
+interface Snapshot {
+  id: string;
+  user_id: string;
+  prompt_version_id: string;  // Ties to specific version
+  name: string;               // Descriptive name (required)
+  variables: Record<string, string>;  // Variable values (JSONB)
+  created_at: string;
+  updated_at: string;
+}
+```
+
+### Creating Snapshots
+
+Save the current resolution state:
+
+```typescript
+import { saveSnapshot } from '@/features/snapshots/actions';
+
+const result = await saveSnapshot({
+  prompt_version_id: versionId,
+  name: 'Production config for customer emails',
+  variables: {
+    tone: 'professional',
+    max_length: '500',
+    include_greeting: 'true',
+  },
+});
+```
+
+Validation rules from `src/lib/validation/snapshot.ts`:
+
+- **name**: Required, 1-100 characters
+- **prompt_version_id**: Must be a valid UUID
+- **variables**: Must be a valid object (stored as JSONB)
+
+### Database Schema
+
+From `supabase/migrations/20260208000004_prompt_snapshots.sql:1-10`:
+
+```sql
+CREATE TABLE prompt_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  prompt_version_id UUID NOT NULL REFERENCES prompt_versions(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  variables JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
+);
+```
+
+<Info>
+Snapshots reference `prompt_version_id`, not `prompt_id`. This ensures snapshots remain tied to the exact prompt content they were created with, even if the prompt is later updated.
+</Info>
+
+### Loading Snapshots
+
+Fetch snapshots for a specific prompt version:
+
+```typescript
+import { getSnapshots } from '@/features/snapshots/queries';
+
+const snapshots = await getSnapshots(promptVersionId);
+// Returns array of snapshots with variables as parsed objects
+```
+
+The `variables` field is stored as JSONB in PostgreSQL, so it's automatically parsed into a JavaScript object.
+
+## MCP Integration
+
+### Resolving via API
+
+The MCP API includes a `resolve_prompt` tool that fetches a prompt and resolves its variables:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "resolve_prompt",
+    "arguments": {
+      "id": "prompt-uuid",
+      "variables": {
+        "role": "data analyst",
+        "task": "customer segmentation"
+      }
+    }
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "You are a data analyst helping with customer segmentation..."
+    }
+  ]
+}
+```
+
+See implementation in `src/features/mcp/tools/resolve-prompt.ts`.
+
+### AI Agent Usage
+
+AI agents (like Claude Desktop) can use the MCP API to:
+
+1. List available prompts
+2. Get prompt details and see required variables
+3. Resolve prompts with context-specific values
+4. Use resolved prompts in their workflows
+
+Learn more in [MCP Overview](/mcp/overview).
+
+## Best Practices
+
+<Card title="Descriptive Variable Names" icon="tag">
+  Use clear names like `{{customer_name}}` instead of `{{x}}`. This makes prompts self-documenting.
+</Card>
+
+<Card title="Default Values" icon="circle-question">
+  Document expected values in the prompt description or version notes. Variable resolution doesn't support defaults.
+</Card>
+
+<Card title="Snapshot Naming" icon="bookmark">
+  Give snapshots descriptive names that explain the use case: "Production config", "Debug mode", "Customer support tone".
+</Card>
+
+<Card title="Version Stability" icon="lock">
+  Snapshots are tied to specific versions. If you significantly change variables in a new version, previous snapshots may not apply cleanly.
+</Card>
+
+## Examples
+
+### Email Template
+
+```text
+Subject: {{subject}}
+
+Hi {{recipient_name}},
+
+{{greeting}}
+
+We wanted to reach out regarding {{topic}}. {{main_content}}
+
+{{closing}}
+
+Best regards,
+{{sender_name}}
+```
+
+Variables: `subject`, `recipient_name`, `greeting`, `topic`, `main_content`, `closing`, `sender_name`
+
+### Code Review Prompt
+
+```text
+You are a {{language}} expert conducting a code review.
+
+Focus areas:
+- {{focus_area_1}}
+- {{focus_area_2}}
+- {{focus_area_3}}
+
+Review the following code and provide feedback:
+
+{{code}}
+```
+
+Variables: `language`, `focus_area_1`, `focus_area_2`, `focus_area_3`, `code`
+
+### Multi-step Analysis
+
+```text
+Analyze {{data_type}} data with these steps:
+
+1. {{step_1}}
+2. {{step_2}}
+3. {{step_3}}
+
+Data:
+{{data}}
+
+Provide output in {{format}} format.
+```
+
+Variables: `data_type`, `step_1`, `step_2`, `step_3`, `data`, `format`
+
+## Limitations
+
+<Warning>
+**No nested braces**: `{{ {{var}} }}` is not supported and will be parsed as a variable named `{{var}}`.
+</Warning>
+
+<Warning>
+**No computed values**: Variables are simple string replacements. No expressions, functions, or transformations.
+</Warning>
+
+<Warning>
+**No type validation**: All variable values are strings. Validation must be done in your application logic.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Search" icon="magnifying-glass" href="/features/search">
+    Find prompts by variable names in content
+  </Card>
+  <Card title="Collections" icon="folder" href="/features/collections">
+    Organize related prompt templates
+  </Card>
+  <Card title="MCP Server" icon="network-wired" href="/ai-tools/mcp-server">
+    Use variable resolution in AI workflows
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/mcp/tools/resolve-prompt">
+    API documentation for resolve_prompt
+  </Card>
+</CardGroup>

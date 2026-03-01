@@ -1,0 +1,165 @@
+---
+title: "search_prompts"
+description: "Full-text search across prompts accessible to the caller"
+---
+
+The `search_prompts` tool executes a PostgreSQL full-text search across prompt titles, descriptions, and content. It uses the same search infrastructure as the PromptRepo web UI.
+
+## Access Control
+
+- **Authenticated users**: Searches across their own prompts (public or private) plus public prompts from other users
+- **Anonymous callers**: Searches only public prompts
+- **Archived prompts**: Never included in search results
+
+## Parameters
+
+<ParamField path="query" type="string" required>
+  Search query text. Must be at least 1 character long. Supports PostgreSQL full-text search syntax including:
+  - Multiple words (AND logic by default)
+  - Phrase matching with quotes: `"exact phrase"`
+  - OR operator: `typescript OR javascript`
+  - NOT operator: `code -review`
+</ParamField>
+
+<ParamField path="limit" type="integer" default={10}>
+  Maximum number of results to return. Must be between 1 and 50.
+</ParamField>
+
+## Response
+
+Returns a `SearchPromptsResult` with matching prompts (same structure as `list_prompts`).
+
+<ResponseField name="prompts" type="array">
+  Array of matching prompt metadata objects, ordered by search relevance
+  
+  <ResponseField name="id" type="string">
+    Unique UUID identifier for the prompt
+  </ResponseField>
+  
+  <ResponseField name="title" type="string">
+    Prompt title
+  </ResponseField>
+  
+  <ResponseField name="description" type="string | null">
+    Optional description of the prompt
+  </ResponseField>
+  
+  <ResponseField name="variables" type="string[]">
+    Array of variable names extracted from the prompt content
+  </ResponseField>
+</ResponseField>
+
+## Examples
+
+### Basic Search
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "method": "tools/call",
+  "params": {
+    "name": "search_prompts",
+    "arguments": {
+      "query": "code review",
+      "limit": 5
+    }
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "result": {
+    "prompts": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "title": "Code Review Template",
+        "description": "Template for reviewing pull requests",
+        "variables": ["language", "pr_url", "focus_area"]
+      },
+      {
+        "id": "660e8400-e29b-41d4-a716-446655440002",
+        "title": "Security Code Review",
+        "description": "Focused security review checklist",
+        "variables": ["repo", "branch"]
+      }
+    ]
+  }
+}
+```
+
+### Advanced Search with Operators
+
+**Request with OR operator:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "tools/call",
+  "params": {
+    "name": "search_prompts",
+    "arguments": {
+      "query": "typescript OR javascript",
+      "limit": 10
+    }
+  }
+}
+```
+
+**Request with phrase matching:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "tools/call",
+  "params": {
+    "name": "search_prompts",
+    "arguments": {
+      "query": "\"bug report\"",
+      "limit": 10
+    }
+  }
+}
+```
+
+## Implementation Details
+
+- Executes the `search_prompts` PostgreSQL RPC function (same as UI search)
+- Uses `tsvector` full-text indexes on `prompts` table for performance
+- The search index is automatically updated by a database trigger (`update_prompt_search_tokens`)
+- Results are ranked by PostgreSQL's `ts_rank` relevance scoring
+- Access control is enforced in application code after the database query
+- Variables are extracted from the `latest_content` field returned by the search function
+
+## Search Behavior
+
+- **Case-insensitive**: Searches ignore case differences
+- **Stemming**: PostgreSQL applies English language stemming (e.g., "reviewing" matches "review")
+- **Indexed fields**: Searches across prompt title, description, and content
+- **Relevance ranking**: Results are ordered by how well they match the query
+- **Trimmed query**: Leading/trailing whitespace is automatically removed
+
+## Error Codes
+
+<ResponseField name="-32602" type="INVALID_PARAMS">
+  Invalid parameters: `query` is empty or missing, or `limit` is out of range
+</ResponseField>
+
+<ResponseField name="-32603" type="INTERNAL_ERROR">
+  Search RPC function failed or database error occurred
+</ResponseField>
+
+## Related Tools
+
+- Use [`list_prompts`](/mcp/tools/list-prompts) to browse all accessible prompts without filtering
+- Use [`get_prompt`](/mcp/tools/get-prompt) to retrieve full details for a specific result
+- Use [`resolve_prompt`](/mcp/tools/resolve-prompt) to use a found prompt with variable substitution

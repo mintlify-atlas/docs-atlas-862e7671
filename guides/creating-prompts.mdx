@@ -1,0 +1,160 @@
+---
+title: Creating Prompts
+description: Learn how to create and manage prompts in PromptRepo
+---
+
+Prompts are the foundation of PromptRepo. Each prompt has a title, description, content, and is automatically versioned to track changes over time.
+
+## Creating Your First Prompt
+
+<Steps>
+  <Step title="Navigate to Create Page">
+    Click the "New Prompt" button in the navigation or visit `/prompts/create` to open the create prompt form.
+  </Step>
+  
+  <Step title="Enter Prompt Details">
+    Fill in the required fields:
+    
+    - **Title**: A descriptive name for your prompt (required)
+    - **Description**: A brief explanation of what the prompt does (optional)
+    - **Prompt Content**: The actual prompt text, which supports markdown formatting
+    - **Version Note**: A note describing this initial version (optional, defaults to "Initial version")
+    
+    <Note>
+      The content field supports markdown, allowing you to use formatting like **bold**, *italic*, lists, and code blocks.
+    </Note>
+  </Step>
+  
+  <Step title="Save Your Prompt">
+    Click the "Save Prompt" button to create your prompt. A success notification will appear once the prompt is saved.
+    
+    The system automatically:
+    - Creates the first version (v1) of your prompt
+    - Generates a unique ID for the prompt
+    - Sets the creation timestamp
+  </Step>
+</Steps>
+
+## Editing Prompts
+
+PromptRepo uses a versioning system, so editing a prompt creates a new version rather than overwriting the original.
+
+<Steps>
+  <Step title="Select a Prompt">
+    From your prompt library (homepage), click on any prompt to view its details.
+  </Step>
+  
+  <Step title="Enter Edit Mode">
+    In the prompt detail view, hover over the prompt content area and click the **Edit** button that appears in the top-right corner.
+  </Step>
+  
+  <Step title="Make Changes">
+    Modify the prompt content in the text editor. The editor displays a notice indicating that a new version will be created.
+    
+    <Tip>
+      Use keyboard shortcuts to save quickly: **Cmd+Enter** (Mac) or **Ctrl+Enter** (Windows/Linux) while in the version note field.
+    </Tip>
+  </Step>
+  
+  <Step title="Add Version Note">
+    Enter an optional version note describing your changes (e.g., "Added clarification for edge cases" or "Fixed typo").
+  </Step>
+  
+  <Step title="Save New Version">
+    Click **Save Version** to create a new version. The prompt will update, and the version number increments automatically.
+  </Step>
+</Steps>
+
+## Editing Prompt Metadata
+
+You can update the title and description without creating a new version.
+
+<Steps>
+  <Step title="Open Prompt Details">
+    Select a prompt from your library to view its details.
+  </Step>
+  
+  <Step title="Click Edit Details">
+    Click the **Edit Details** button in the top-right area of the prompt header.
+  </Step>
+  
+  <Step title="Update Information">
+    Modify the title and/or description fields as needed.
+  </Step>
+  
+  <Step title="Save Changes">
+    Click **Save Details** to update the metadata. This action does not create a new version.
+  </Step>
+</Steps>
+
+## Sharing Prompts
+
+Prompts can be made public to share with others via a read-only link.
+
+<Steps>
+  <Step title="Toggle Public Sharing">
+    In the prompt detail view, click the **Share** button to make the prompt public.
+    
+    Once public, the button changes to **Public** and a **Copy link** button appears.
+  </Step>
+  
+  <Step title="Copy Share Link">
+    Click **Copy link** to copy the public URL to your clipboard.
+    
+    The link format is: `https://your-app-url/p/{promptId}`
+  </Step>
+  
+  <Step title="Share with Others">
+    Share the copied link with anyone. They can view the prompt content without needing to log in.
+    
+    <Note>
+      Public prompts are read-only. Viewers cannot edit or copy them to their own library directly.
+    </Note>
+  </Step>
+</Steps>
+
+## Viewing Version History
+
+Every edit creates a new version, and you can view or restore previous versions.
+
+<Steps>
+  <Step title="Open History Tab">
+    In the prompt detail view, click the **History** tab to see all versions.
+  </Step>
+  
+  <Step title="Review Versions">
+    Each version displays:
+    - Version number
+    - Creation date and time
+    - Version note (if provided)
+    - A preview of the content
+  </Step>
+  
+  <Step title="Restore a Previous Version">
+    Click the **Restore** button on any previous version to make it the current version.
+    
+    <Note>
+      Restoring a version creates a new version with the restored content, preserving the complete history.
+    </Note>
+  </Step>
+</Steps>
+
+## Archiving Prompts
+
+Archiving removes prompts from your active library without deleting them.
+
+- Archived prompts are marked with an "Archived" badge
+- They can be restored at any time
+- Archived prompts don't appear in search results by default
+
+<Tip>
+  Use the **Archived** filter in your prompt library to view and manage archived prompts.
+</Tip>
+
+## Best Practices
+
+- **Use descriptive titles**: Make it easy to find prompts later
+- **Add version notes**: Document why you made changes
+- **Keep prompts focused**: One prompt should serve one clear purpose
+- **Test before sharing**: Verify your prompt works as expected before making it public
+- **Review history regularly**: Check version history to understand how your prompts evolved

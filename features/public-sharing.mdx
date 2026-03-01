@@ -1,0 +1,416 @@
+---
+title: 'Public Sharing'
+description: 'Share prompts publicly via read-only URLs without authentication'
+icon: 'share-nodes'
+---
+
+## Overview
+
+Public sharing allows you to make prompts accessible to anyone with the link, without requiring authentication. Shared prompts are read-only and display only the latest version's content.
+
+## Enabling Public Sharing
+
+### Toggle Public Status
+
+Make a prompt public or private:
+
+```typescript
+import { togglePromptPublic } from '@/features/prompts/actions/manage-prompt';
+
+// Make public
+await togglePromptPublic(promptId, true);
+
+// Make private
+await togglePromptPublic(promptId, false);
+```
+
+Implementation from `src/features/prompts/actions/manage-prompt.ts:76-94`:
+
+```typescript
+export async function togglePromptPublic(
+  promptId: string,
+  isPublic: boolean,
+): Promise<PromptActionResult> {
+  const { supabase, user } = await requireUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  const { error } = await supabase
+    .from('prompts')
+    .update({ is_public: isPublic })
+    .eq('id', promptId);
+
+  if (error) {
+    return { success: false, error: `Failed to update sharing: ${error.message}` };
+  }
+
+  revalidatePath('/');
+  return { success: true };
+}
+```
+
+This sets the `is_public` boolean flag on the prompt.
+
+<Info>
+Only the prompt owner can toggle public status. Row Level Security (RLS) policies enforce this.
+</Info>
+
+## Public URLs
+
+### URL Format
+
+Public prompts are accessible at:
+
+```
+https://your-app.com/p/[promptId]
+```
+
+Example:
+```
+https://promptrepo.com/p/550e8400-e29b-41d4-a716-446655440000
+```
+
+The `/p/` route is specifically designed for unauthenticated public access.
+
+### Implementation
+
+The public page is implemented in `src/app/p/[promptId]/page.tsx:8-31`:
+
+```typescript
+export default async function PublicPromptPage({ params }: PublicPromptPageProps) {
+  const { promptId } = await params;
+  const prompt = await getPublicPrompt(promptId);
+
+  if (!prompt) {
+    notFound();
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <div className="container max-w-2xl px-4 py-10">
+        <div className="mb-6 space-y-1">
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            {prompt.title}
+          </h1>
+          {prompt.description && (
+            <p className="text-sm text-muted-foreground">
+              {prompt.description}
+            </p>
+          )}
+        </div>
+        <div className="rounded-md border border-border bg-card p-4 font-mono text-sm leading-relaxed text-foreground whitespace-pre-wrap shadow-sm">
+          {prompt.latest_content}
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+<Note>
+The public page is a Server Component that fetches data without requiring authentication.
+</Note>
+
+## Fetching Public Prompts
+
+### Public Client
+
+Public prompts use a special Supabase client that bypasses RLS:
+
+```typescript
+import { getPublicPrompt } from '@/features/prompts/queries/get-public-prompt';
+
+const prompt = await getPublicPrompt(promptId);
+```
+
+Implementation from `src/features/prompts/queries/get-public-prompt.ts:14-46`:
+
+```typescript
+export async function getPublicPrompt(promptId: string): Promise<PublicPrompt | null> {
+  const supabase = createPublicClient();
+
+  const { data, error } = await supabase
+    .from('prompts')
+    .select(`
+      id,
+      title,
+      description,
+      prompt_versions (
+        content,
+        version_number
+      )
+    `)
+    .eq('id', promptId)
+    .eq('is_public', true)  // Only return if public
+    .maybeSingle();
+
+  if (error || !data) {
+    return null;
+  }
+
+  const response = data as unknown as DbPublicPromptResponse;
+  const versions = response.prompt_versions || [];
+  const latestVersion = versions.sort((a, b) => 
+    b.version_number - a.version_number
+  )[0];
+
+  return {
+    id: response.id,
+    title: response.title,
+    description: response.description,
+    latest_content: latestVersion?.content || '',
+  };
+}
+```
+
+### Public Prompt Type
+
+Public prompts expose limited information:
+
+```typescript
+interface PublicPrompt {
+  id: string;
+  title: string;
+  description: string | null;
+  latest_content: string;  // Only the latest version
+}
+```
+
+From `src/features/prompts/types/index.ts:12-17`.
+
+<Warning>
+Public prompts do not expose:
+- Version history
+- User information
+- Creation/update timestamps
+- Archive status
+- Collection associations
+</Warning>
+
+## Database Schema
+
+### is_public Flag
+
+From `supabase/migrations/20260227000007_prompt_public_sharing.sql`:
+
+```sql
+ALTER TABLE prompts 
+  ADD COLUMN is_public BOOLEAN DEFAULT false NOT NULL;
+
+CREATE INDEX idx_prompts_is_public ON prompts(is_public);
+```
+
+The index optimizes queries for public prompts.
+
+### RLS Policy
+
+Public prompts have a special RLS policy:
+
+```sql
+CREATE POLICY "Anyone can view public prompts" 
+  ON prompts FOR SELECT 
+  USING (is_public = true);
+```
+
+This allows unauthenticated users to read public prompts without bypassing RLS entirely.
+
+## Security Considerations
+
+### What's Exposed
+
+When you make a prompt public:
+
+- **Title and description** are visible
+- **Latest version content** is visible
+- **Prompt ID** is visible in the URL
+
+### What's Protected
+
+- **Version history** is not accessible
+- **User identity** is not exposed
+- **Other prompts** by the same user are not discoverable
+- **Edit/delete operations** are not possible
+- **Variable values** from snapshots are not exposed
+
+<Warning>
+Do not include sensitive information (API keys, passwords, personal data) in prompts you plan to share publicly.
+</Warning>
+
+### Middleware Bypass
+
+The `/p/*` route is excluded from authentication middleware:
+
+```typescript
+// From src/middleware.ts
+export const config = {
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$|p/).*)',
+  ],
+};
+```
+
+This allows unauthenticated access to public sharing URLs.
+
+## Use Cases
+
+### Portfolio
+
+Share your best prompts publicly:
+
+```text
+Title: "Advanced Code Review Prompt"
+Public URL: /p/abc123
+Use: Include in your portfolio or resume
+```
+
+### Documentation
+
+Embed prompts in documentation:
+
+```markdown
+## Example Prompt
+
+See our [customer support template](/p/def456) for reference.
+```
+
+### Team Sharing
+
+Share with team members without requiring accounts:
+
+```text
+Hey team, check out this prompt: https://promptrepo.com/p/ghi789
+Feel free to copy and adapt it for your needs.
+```
+
+### Education
+
+Share prompts in courses or tutorials:
+
+```text
+Lesson 5: See the [example prompt](/p/jkl012) demonstrating 
+variable usage.
+```
+
+## Revoking Access
+
+### Make Private
+
+Revoke public access at any time:
+
+```typescript
+await togglePromptPublic(promptId, false);
+```
+
+The public URL will immediately return a 404 error.
+
+<Info>
+Making a prompt private does not invalidate existing links. Users will simply see a "Not Found" page.
+</Info>
+
+### No Tracking
+
+PromptRepo does not track:
+- Who accesses public links
+- How many times a link is accessed
+- When a link is accessed
+
+This is intentional to keep the system simple and privacy-focused.
+
+## Limitations
+
+<Warning>
+**No versioning**: Public URLs always show the latest version. If you update the prompt, the public link updates too.
+</Warning>
+
+<Warning>
+**No comments or feedback**: Public viewers cannot leave comments or provide feedback directly.
+</Warning>
+
+<Warning>
+**No analytics**: You cannot see view counts, visitor demographics, or access patterns.
+</Warning>
+
+<Warning>
+**No collaboration**: Public sharing is read-only. Viewers must copy the content to use it.
+</Warning>
+
+## Best Practices
+
+<Card title="Review Before Sharing" icon="eye">
+  Always review prompt content before making it public. Ensure no sensitive information is included.
+</Card>
+
+<Card title="Clear Descriptions" icon="file-lines">
+  Add helpful descriptions to public prompts. Viewers see this context on the public page.
+</Card>
+
+<Card title="Version Stability" icon="lock">
+  Remember that public URLs reflect the latest version. If you need to share a specific version, consider copying it to a new prompt first.
+</Card>
+
+<Card title="License Information" icon="scale-balanced">
+  If you want to specify how others can use your prompt (e.g., Creative Commons), include this in the description.
+</Card>
+
+## API Access
+
+### MCP Server
+
+Public prompts can be accessed via the MCP API without authentication:
+
+```bash
+curl -X POST https://your-app/api/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "get_prompt",
+      "arguments": { "id": "prompt-uuid" }
+    }
+  }'
+```
+
+Without an API key, only public prompts are returned.
+
+### Direct Database Query
+
+If you're building a custom integration:
+
+```typescript
+const { data } = await supabase
+  .from('prompts')
+  .select('id, title, description')
+  .eq('is_public', true);
+```
+
+This requires a Supabase client with appropriate RLS policies.
+
+## Future Enhancements
+
+Potential features for public sharing:
+
+- **View counts**: Track how many times a prompt is accessed
+- **Comments**: Allow public feedback
+- **Embedding**: Generate embeddable widgets
+- **Version pinning**: Share specific versions instead of always latest
+- **Custom slugs**: Use readable URLs like `/p/my-awesome-prompt`
+- **Search**: Public prompt directory
+
+These are not currently implemented.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Prompt Management" icon="file-lines" href="/features/prompt-management">
+    Learn about prompt lifecycle and metadata
+  </Card>
+  <Card title="Version Control" icon="code-branch" href="/features/version-control">
+    Understand how versions work with public sharing
+  </Card>
+  <Card title="Collections" icon="folder" href="/features/collections">
+    Organize prompts before sharing
+  </Card>
+  <Card title="MCP API" icon="code" href="/api-reference/mcp/overview">
+    Access public prompts programmatically
+  </Card>
+</CardGroup>

@@ -1,80 +1,263 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get from zero to your first working prompt with dynamic variables in under 5 minutes.
 ---
 
-## Get started in three steps
+# Quickstart
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+This guide walks you through creating your first prompt, using variables, and testing dynamic resolution. You'll be up and running in under 5 minutes.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  This quickstart assumes you're using the hosted version of PromptRepo. If you want to run it locally, see the [Installation](/installation) guide first.
 </Note>
+
+## Step 1: Create an Account
+
+<Steps>
+  <Step title="Navigate to the login page">
+    Visit the PromptRepo login page and click **Sign Up**.
+  </Step>
+  
+  <Step title="Choose your authentication method">
+    You can sign up using:
+    - **Email/Password** — Enter your email and create a password
+    - **GitHub OAuth** — Click the GitHub button to authenticate
+    - **Google OAuth** — Click the Google button to authenticate
+    
+    <Info>
+      If using email/password, you'll receive a confirmation email. Check your inbox and click the confirmation link to activate your account.
+    </Info>
+  </Step>
+  
+  <Step title="Confirm your email (email/password only)">
+    Open the confirmation email and click the link to verify your account. You'll be redirected to the PromptRepo dashboard.
+  </Step>
+</Steps>
+
+## Step 2: Create Your First Prompt
+
+<Steps>
+  <Step title="Navigate to the Create Prompt page">
+    From the dashboard, click the **Create Prompt** button or navigate to `/prompts/create`.
+  </Step>
+  
+  <Step title="Fill in the prompt details">
+    The create prompt form has four fields:
+    
+    - **Title** (required) — A short, descriptive name (e.g., "Code Review Assistant")
+    - **Description** (optional) — Additional context about the prompt's purpose
+    - **Content** (required) — The actual prompt text (supports variables with `{{variable}}` syntax)
+    - **Version Note** (optional) — A note describing this initial version
+    
+    <Tip>
+      Use descriptive titles that make prompts easy to find in search. Examples: "Python Docstring Generator", "API Endpoint Design Template", "Bug Triage Checklist".
+    </Tip>
+  </Step>
+  
+  <Step title="Save your prompt">
+    Click **Create Prompt**. Your prompt is saved with version number 1. You'll be redirected to the prompt detail page.
+  </Step>
+</Steps>
+
+### Example: Simple Prompt (No Variables)
+
+Let's create a basic code review assistant:
+
+```markdown
+**Title:** Code Review Assistant
+**Description:** General-purpose code review checklist
+**Content:**
+You are an expert code reviewer. Review the following code for:
+
+1. Correctness and logic errors
+2. Performance issues
+3. Security vulnerabilities
+4. Code style and best practices
+5. Test coverage
+
+Provide specific, actionable feedback with line references.
+```
+
+## Step 3: Use Variables for Reusable Templates
+
+PromptRepo's real power comes from **dynamic variable resolution**. Use `{{variable}}` syntax to create reusable templates.
+
+<Steps>
+  <Step title="Create a prompt with variables">
+    Click **Create Prompt** again and add variables using double curly braces:
+  </Step>
+  
+  <Step title="Define variable placeholders">
+    PromptRepo automatically detects variables in your content. Common patterns:
+    
+    - `{{language}}` — Programming language
+    - `{{framework}}` — Framework or library
+    - `{{task}}` — Specific task or goal
+    - `{{context}}` — Additional context
+    
+    <Info>
+      Variables can contain spaces and special characters: `{{target audience}}`, `{{code_style}}`, `{{API-version}}` are all valid.
+    </Info>
+  </Step>
+  
+  <Step title="Save and test resolution">
+    After saving, you'll see the prompt detail page with a **Variable Resolution** section. Enter values for each variable to see the resolved output in real-time.
+  </Step>
+</Steps>
+
+### Example: Prompt with Variables
+
+Let's create a language-agnostic docstring generator:
+
+```markdown
+**Title:** Docstring Generator
+**Description:** Generate documentation for functions in any language
+**Content:**
+You are a documentation expert for {{language}}.
+
+Generate a {{language}}-style docstring for the following function following {{framework}} conventions:
+
+- Include parameter types and descriptions
+- Document return values
+- Add usage examples if appropriate
+- Follow {{language}} formatting standards (e.g., JSDoc, Python docstrings, Javadoc)
+
+Function to document:
+{{code}}
+```
+
+**Variable Resolution Example:**
+
+| Variable | Value |
+|----------|-------|
+| `language` | Python |
+| `framework` | Google Style Guide |
+| `code` | `def calculate_discount(price, percentage): ...` |
+
+**Resolved Output:**
+
+```markdown
+You are a documentation expert for Python.
+
+Generate a Python-style docstring for the following function following Google Style Guide conventions:
+
+- Include parameter types and descriptions
+- Document return values
+- Add usage examples if appropriate
+- Follow Python formatting standards (e.g., JSDoc, Python docstrings, Javadoc)
+
+Function to document:
+def calculate_discount(price, percentage): ...
+```
+
+## Step 4: Search Your Prompts
+
+PromptRepo includes **full-text search** powered by PostgreSQL's `tsvector` for sub-100ms query times.
+
+<Steps>
+  <Step title="Open the search modal">
+    Press `Cmd+K` (Mac) or `Ctrl+K` (Windows/Linux) anywhere in the app.
+  </Step>
+  
+  <Step title="Type your search query">
+    Search matches against:
+    - Prompt titles
+    - Descriptions
+    - Content (including variable names)
+    
+    <Tip>
+      Search queries are tokenized and ranked by relevance. Try searching for concepts like "code review", "documentation", or specific variable names like "{{language}}".
+    </Tip>
+  </Step>
+  
+  <Step title="Navigate with keyboard">
+    Use **arrow keys** to navigate results and **Enter** to open a prompt. Press **Escape** to close the search modal.
+  </Step>
+</Steps>
+
+## Step 5: Version Control and History
+
+Every edit creates a new version. Let's test this:
+
+<Steps>
+  <Step title="Edit an existing prompt">
+    Open a prompt from your dashboard and click **Edit** or **Save New Version**.
+  </Step>
+  
+  <Step title="Make changes and add a version note">
+    Update the content and add a descriptive version note (e.g., "Added error handling section").
+  </Step>
+  
+  <Step title="View version history">
+    Click the **History** tab on the prompt detail page. You'll see all versions with:
+    - Version numbers
+    - Creation timestamps
+    - Version notes
+    - Content diffs
+    
+    <Info>
+      PromptRepo uses a two-table versioning pattern. The `prompts` table holds HEAD metadata, while `prompt_versions` stores immutable history. You can always restore previous versions.
+    </Info>
+  </Step>
+  
+  <Step title="Restore a previous version (optional)">
+    Click **Restore** on any previous version to create a new version with that content. This doesn't delete history — it creates a new version with the old content.
+  </Step>
+</Steps>
+
+## Step 6: Share Your Prompt
+
+Generate a **public sharing link** for read-only access:
+
+<Steps>
+  <Step title="Enable public access">
+    On the prompt detail page, toggle **Public Access** to ON.
+  </Step>
+  
+  <Step title="Copy the sharing link">
+    The app generates a URL like `https://your-app.com/p/abc123`. Copy this link.
+  </Step>
+  
+  <Step title="Share with others">
+    Anyone with this link can view the prompt (read-only). They don't need a PromptRepo account.
+    
+    <Warning>
+      Public links are read-only but globally accessible. Don't enable public access for prompts containing sensitive information.
+    </Warning>
+  </Step>
+</Steps>
+
+## Next Steps
+
+Congratulations! You've created your first prompt with variables, tested resolution, searched your library, and explored version control.
+
+### Explore Advanced Features
+
+<CardGroup cols={2}>
+  <Card title="MCP Integration" icon="plug" href="/features/mcp-server">
+    Connect PromptRepo to Claude Desktop or other AI agents
+  </Card>
+  
+  <Card title="Collections" icon="folder" href="/features/collections">
+    Organize prompts into project-based collections
+  </Card>
+  
+  <Card title="Snapshots" icon="camera" href="/features/snapshots">
+    Create point-in-time captures of prompt states
+  </Card>
+  
+  <Card title="API Reference" icon="code" href="/api-reference">
+    Explore server actions and database queries
+  </Card>
+</CardGroup>
+
+### Learn Best Practices
+
+- **Naming conventions** — Use descriptive, searchable titles
+- **Variable design** — Keep variable names short and semantic
+- **Version notes** — Document what changed and why
+- **Collections** — Group related prompts by project or workflow
+
+<Tip>
+  Join our community to share prompts, templates, and best practices with other PromptRepo users.
+</Tip>

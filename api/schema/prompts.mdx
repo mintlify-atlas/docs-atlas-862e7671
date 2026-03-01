@@ -1,0 +1,184 @@
+---
+title: "prompts"
+description: "Main prompt table storing metadata and HEAD state"
+---
+
+## Overview
+
+The `prompts` table stores the metadata and current state for each prompt. It works together with `prompt_versions` in a two-table versioning pattern where `prompts` holds the HEAD pointer and `prompt_versions` stores immutable history.
+
+## Schema
+
+<ParamField path="id" type="UUID" required>
+  Primary key. Auto-generated using `gen_random_uuid()`.
+</ParamField>
+
+<ParamField path="user_id" type="UUID" required>
+  Owner of the prompt. References `profiles(id)` with `ON DELETE CASCADE`.
+</ParamField>
+
+<ParamField path="title" type="TEXT" required>
+  Human-readable prompt title. Indexed for full-text search with weight 'A' (highest priority).
+</ParamField>
+
+<ParamField path="description" type="TEXT">
+  Optional prompt description. Indexed for full-text search with weight 'B'.
+</ParamField>
+
+<ParamField path="archived_at" type="TIMESTAMPTZ">
+  Soft-delete timestamp. When set, the prompt is considered archived. Used for lifecycle management without hard deletion.
+</ParamField>
+
+<ParamField path="is_public" type="BOOLEAN" default="false">
+  Public sharing flag. When `true`, the prompt is readable by anonymous users via `/p/[promptId]` routes.
+</ParamField>
+
+<ParamField path="search_tokens" type="tsvector">
+  Full-text search index combining title (weight A), description (weight B), and latest content (weight C). Auto-maintained by triggers.
+</ParamField>
+
+<ParamField path="created_at" type="TIMESTAMPTZ" required>
+  Creation timestamp. Defaults to `timezone('utc', now())`.
+</ParamField>
+
+<ParamField path="updated_at" type="TIMESTAMPTZ" required>
+  Last modification timestamp. Auto-updated by `handle_updated_at()` trigger on UPDATE.
+</ParamField>
+
+## Indexes
+
+```sql
+CREATE INDEX idx_prompts_user_id ON prompts(user_id);
+CREATE INDEX idx_prompts_user_archived_at ON prompts(user_id, archived_at);
+CREATE INDEX idx_prompts_search_tokens ON prompts USING GIN(search_tokens);
+CREATE INDEX idx_prompts_is_public ON prompts(is_public) WHERE is_public = true;
+```
+
+- **idx_prompts_user_id**: Fast lookup of all prompts for a user
+- **idx_prompts_user_archived_at**: Efficient filtering of active vs archived prompts
+- **idx_prompts_search_tokens**: GIN index for full-text search queries
+- **idx_prompts_is_public**: Partial index for public prompt discovery
+
+## Row Level Security
+
+```sql
+-- Owner access
+CREATE POLICY "Users can view their own prompts" 
+  ON prompts FOR SELECT 
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert their own prompts" 
+  ON prompts FOR INSERT 
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own prompts" 
+  ON prompts FOR UPDATE 
+  USING (auth.uid() = user_id) 
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own prompts" 
+  ON prompts FOR DELETE 
+  USING (auth.uid() = user_id);
+
+-- Public sharing
+CREATE POLICY "Public prompts are readable by anyone" 
+  ON prompts FOR SELECT 
+  USING (is_public = true);
+```
+
+Policies are OR'd by Supabase, so a prompt is readable if the user is the owner **or** it's marked public.
+
+## Relationships
+
+- **One-to-Many** with `prompt_versions`: Each prompt can have multiple versions
+- **Many-to-Many** with `collections` via `collection_prompts`
+- **One-to-Many** with `prompt_snapshots` (via `prompt_versions`)
+- **Many-to-One** with `profiles`: Each prompt belongs to one user
+
+## Two-Table Versioning Pattern
+
+PromptRepo uses a two-table pattern to separate HEAD state from version history:
+
+1. **`prompts`** holds mutable metadata (title, description, archived_at, is_public)
+2. **`prompt_versions`** stores immutable content snapshots
+
+When you update a prompt:
+
+```sql
+-- 1. Insert new version
+INSERT INTO prompt_versions (prompt_id, version_number, content, version_note)
+VALUES (prompt_id, next_version_number, new_content, 'Updated variables');
+
+-- 2. Update HEAD metadata (optional)
+UPDATE prompts 
+SET title = 'New Title', updated_at = now() 
+WHERE id = prompt_id;
+```
+
+The `get_latest_prompt_content()` function retrieves the highest `version_number` for a given prompt:
+
+```sql
+CREATE FUNCTION get_latest_prompt_content(p_id UUID) RETURNS TEXT AS $$
+  SELECT content FROM prompt_versions
+  WHERE prompt_id = p_id
+  ORDER BY version_number DESC LIMIT 1;
+$$ LANGUAGE sql STABLE;
+```
+
+## Triggers
+
+### Updated At
+
+```sql
+CREATE TRIGGER on_prompts_updated
+  BEFORE UPDATE ON prompts
+  FOR EACH ROW EXECUTE FUNCTION handle_updated_at();
+```
+
+Auto-sets `updated_at = now()` on every UPDATE.
+
+### Search Index Maintenance
+
+```sql
+CREATE TRIGGER tr_prompts_search_update
+  BEFORE INSERT OR UPDATE OF title, description ON prompts
+  FOR EACH ROW EXECUTE FUNCTION update_prompt_search_tokens_trigger();
+```
+
+Recomputes `search_tokens` whenever title or description changes. Also triggered when new `prompt_versions` are inserted (see supabase/migrations/20260208000002_search_index.sql:62).
+
+## TypeScript Types
+
+```typescript
+// src/features/prompts/types/index.ts
+export interface Prompt {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string | null;
+  archived_at: string | null;
+  is_public: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PromptWithLatestVersion extends Prompt {
+  latest_content: string;
+  latest_version_id: string;
+  collection_ids: string[];
+}
+
+export interface PublicPrompt {
+  id: string;
+  title: string;
+  description: string | null;
+  latest_content: string;
+}
+```
+
+## Migration Files
+
+- **20260208000001_prompt_schema.sql**: Initial table creation
+- **20260208000002_search_index.sql**: Full-text search support
+- **20260226000006_prompt_lifecycle_archive.sql**: `archived_at` column
+- **20260227000007_prompt_public_sharing.sql**: `is_public` flag and policy

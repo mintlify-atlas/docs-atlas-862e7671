@@ -1,0 +1,328 @@
+---
+title: "Search Actions"
+description: "Server actions for full-text search across prompts"
+---
+
+## Overview
+
+The search module provides full-text search capabilities powered by PostgreSQL's `tsvector` and a custom `search_prompts` database function. Search queries are tokenized and matched against prompt titles, descriptions, and content.
+
+## searchPrompts
+
+Performs a full-text search across prompts with optional filtering.
+
+**Location:** `src/features/search/actions.ts:15`
+
+```typescript
+export async function searchPrompts(
+  query: string,
+  options?: {
+    userId?: string;
+    collectionId?: string;
+    archived?: boolean;
+  }
+): Promise<{ data: SearchResult[] | null; error: string | null }>
+```
+
+### Parameters
+
+<ParamField path="query" type="string" required>
+  Search query string (1-500 characters). Searches across prompt titles, descriptions, and content.
+</ParamField>
+
+<ParamField path="options" type="object">
+  Optional filters to narrow search results
+
+  <ParamField path="options.userId" type="string">
+    UUID of a user to filter results by ownership. If provided, only prompts owned by this user are returned.
+  </ParamField>
+
+  <ParamField path="options.collectionId" type="string">
+    UUID of a collection to filter results. If provided, only prompts in this collection are returned.
+  </ParamField>
+
+  <ParamField path="options.archived" type="boolean">
+    Whether to include archived prompts. If `true`, returns only archived prompts. If `false`, returns only non-archived prompts. If omitted, returns both.
+  </ParamField>
+</ParamField>
+
+### Returns
+
+<ResponseField name="result" type="object">
+  <ResponseField name="data" type="SearchResult[] | null">
+    Array of matching prompts, or `null` if an error occurred. Returns empty array `[]` if query is empty.
+  </ResponseField>
+
+  <ResponseField name="error" type="string | null">
+    Error message if search failed, otherwise `null`
+  </ResponseField>
+</ResponseField>
+
+### SearchResult Type
+
+Each search result contains:
+
+<ResponseField name="SearchResult" type="object">
+  <ResponseField name="id" type="string">
+    Prompt UUID
+  </ResponseField>
+
+  <ResponseField name="user_id" type="string">
+    UUID of the prompt owner
+  </ResponseField>
+
+  <ResponseField name="title" type="string">
+    Prompt title
+  </ResponseField>
+
+  <ResponseField name="description" type="string | null">
+    Prompt description (may be null)
+  </ResponseField>
+
+  <ResponseField name="archived_at" type="string | null">
+    ISO timestamp when prompt was archived, or `null` if not archived
+  </ResponseField>
+
+  <ResponseField name="is_public" type="boolean">
+    Whether the prompt is publicly accessible
+  </ResponseField>
+
+  <ResponseField name="created_at" type="string">
+    ISO timestamp when prompt was created
+  </ResponseField>
+
+  <ResponseField name="updated_at" type="string">
+    ISO timestamp when prompt was last updated
+  </ResponseField>
+
+  <ResponseField name="latest_content" type="string">
+    Content from the most recent version
+  </ResponseField>
+
+  <ResponseField name="latest_version_id" type="string">
+    UUID of the latest version
+  </ResponseField>
+
+  <ResponseField name="collection_ids" type="string[]">
+    Array of collection UUIDs this prompt belongs to
+  </ResponseField>
+
+  <ResponseField name="rank" type="number">
+    Relevance score from PostgreSQL full-text search. Higher values indicate better matches.
+  </ResponseField>
+</ResponseField>
+
+### Validation
+
+Input is validated using the `searchSchema` Zod schema:
+
+```typescript
+const searchSchema = z.object({
+  query: z.string().min(1).max(500),
+  userId: z.string().uuid().optional(),
+  collectionId: z.string().uuid().optional(),
+  archived: z.boolean().optional(),
+});
+```
+
+Validation errors return:
+```typescript
+{ data: null, error: 'Invalid search query or parameters' }
+```
+
+### Examples
+
+#### Basic search
+
+```typescript
+import { searchPrompts } from '@/features/search/actions';
+
+const { data, error } = await searchPrompts('code review');
+
+if (error) {
+  console.error('Search failed:', error);
+} else if (data) {
+  console.log(`Found ${data.length} prompts`);
+  data.forEach(result => {
+    console.log(`- ${result.title} (rank: ${result.rank})`);
+  });
+}
+```
+
+#### Search with filters
+
+```typescript
+import { searchPrompts } from '@/features/search/actions';
+
+// Search only non-archived prompts in a specific collection
+const { data, error } = await searchPrompts('debugging', {
+  collectionId: 'collection-uuid',
+  archived: false,
+});
+
+if (data) {
+  console.log(`Found ${data.length} active prompts in collection`);
+}
+```
+
+#### Search user's prompts
+
+```typescript
+import { searchPrompts } from '@/features/search/actions';
+import { createClient } from '@/lib/supabase/server';
+import { cookies } from 'next/headers';
+
+const cookieStore = await cookies();
+const supabase = createClient(cookieStore);
+const { data: { user } } = await supabase.auth.getUser();
+
+if (user) {
+  const { data, error } = await searchPrompts('api', {
+    userId: user.id,
+  });
+  
+  console.log(`Found ${data?.length ?? 0} of your prompts`);
+}
+```
+
+### Behavior
+
+- **Empty query**: Returns `{ data: [], error: null }` without performing a database query
+- **Case-insensitive**: Search is case-insensitive
+- **Ranking**: Results are ordered by relevance (PostgreSQL `ts_rank`)
+- **Database function**: Delegates to the `search_prompts` RPC function in PostgreSQL
+- **Authentication**: Does not require authentication, but typically used with `userId` filter to scope results
+
+### Database Implementation
+
+The search is powered by a PostgreSQL RPC function:
+
+```sql
+CREATE FUNCTION search_prompts(
+  query_text TEXT,
+  filter_user_id UUID DEFAULT NULL,
+  filter_collection_id UUID DEFAULT NULL,
+  filter_archived BOOLEAN DEFAULT NULL
+) RETURNS TABLE (...)
+```
+
+The function uses:
+- `to_tsquery()` for query parsing
+- `tsvector` column (`search_tokens`) for indexed full-text search
+- `ts_rank()` for relevance scoring
+- A trigger (`update_prompt_search_tokens`) that automatically updates the search index when prompts or versions change
+
+### Performance
+
+- Search queries are fast due to GIN index on the `search_tokens` column
+- The `search_tokens` tsvector is automatically maintained by a database trigger
+- Results are limited by the database function (typically to prevent excessive result sets)
+
+### Error Handling
+
+Possible error scenarios:
+
+1. **Validation failure**: Invalid UUID format or query length
+   ```typescript
+   { data: null, error: 'Invalid search query or parameters' }
+   ```
+
+2. **Database error**: Connection issues or query execution failure
+   ```typescript
+   { data: null, error: 'Search failed: <database error message>' }
+   ```
+
+3. **Empty query**: Not treated as error
+   ```typescript
+   { data: [], error: null }
+   ```
+
+Database errors are logged to the server console for debugging:
+
+```typescript
+console.error('Search error:', error);
+```
+
+### Security
+
+- Search respects Row-Level Security (RLS) policies in Supabase
+- Users can only search prompts they have access to (owned by them or public)
+- API key authentication (for MCP) automatically scopes search to the key owner's prompts
+
+### Integration with UI
+
+Typical usage in a search component:
+
+```typescript
+'use client';
+
+import { useState } from 'react';
+import { searchPrompts } from '@/features/search/actions';
+import type { SearchResult } from '@/features/search/types';
+
+export function SearchBar() {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const handleSearch = async (q: string) => {
+    setQuery(q);
+    if (!q.trim()) {
+      setResults([]);
+      return;
+    }
+
+    setLoading(true);
+    const { data, error } = await searchPrompts(q);
+    setLoading(false);
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    setResults(data ?? []);
+  };
+
+  return (
+    <div>
+      <input
+        type="search"
+        value={query}
+        onChange={(e) => handleSearch(e.target.value)}
+        placeholder="Search prompts..."
+      />
+      {loading && <div>Searching...</div>}
+      <ul>
+        {results.map((result) => (
+          <li key={result.id}>
+            <a href={`/prompts/${result.id}`}>{result.title}</a>
+            <span>Relevance: {result.rank.toFixed(2)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+### MCP Integration
+
+The search action is exposed via the Model Context Protocol at `/api/mcp` as the `search_prompts` tool:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "search_prompts",
+    "arguments": {
+      "query": "api documentation",
+      "archived": false
+    }
+  },
+  "id": 1
+}
+```
+
+See the [MCP Overview](/mcp/overview) for more details.

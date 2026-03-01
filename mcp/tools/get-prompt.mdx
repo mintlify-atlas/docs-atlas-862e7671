@@ -1,0 +1,118 @@
+---
+title: "get_prompt"
+description: "Fetches a single prompt by ID including full content and metadata"
+---
+
+The `get_prompt` tool retrieves complete details for a single prompt, including the full content of its latest version and extracted variable names.
+
+## Access Control
+
+- **Authenticated users**: Can access their own prompts (public or private) OR any other user's public prompts
+- **Anonymous callers**: Can only access public prompts (`is_public = true`)
+- **Private prompts**: Attempting to access another user's private prompt returns `PROMPT_NOT_FOUND` (does not reveal existence to prevent enumeration attacks)
+
+## Parameters
+
+<ParamField path="prompt_id" type="string" required>
+  UUID of the prompt to retrieve. Must be a valid UUID format.
+</ParamField>
+
+## Response
+
+Returns a `GetPromptResult` object with complete prompt details.
+
+<ResponseField name="id" type="string">
+  Unique UUID identifier for the prompt
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Prompt title
+</ResponseField>
+
+<ResponseField name="description" type="string | null">
+  Optional description of the prompt
+</ResponseField>
+
+<ResponseField name="content" type="string">
+  Full content of the prompt's latest version. This is the template that may contain `{{variable}}` placeholders.
+</ResponseField>
+
+<ResponseField name="variables" type="string[]">
+  Array of variable names extracted from the content using `{{variable}}` syntax
+</ResponseField>
+
+<ResponseField name="is_public" type="boolean">
+  Whether the prompt is publicly accessible
+</ResponseField>
+
+<ResponseField name="version_number" type="integer">
+  Version number of the latest prompt version
+</ResponseField>
+
+<ResponseField name="created_at" type="string">
+  ISO 8601 timestamp when the prompt was created
+</ResponseField>
+
+<ResponseField name="updated_at" type="string">
+  ISO 8601 timestamp when the prompt was last updated
+</ResponseField>
+
+## Examples
+
+### Request
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "get_prompt",
+    "arguments": {
+      "prompt_id": "550e8400-e29b-41d4-a716-446655440000"
+    }
+  }
+}
+```
+
+### Response
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "title": "Code Review Template",
+    "description": "Template for reviewing pull requests",
+    "content": "Please review the following {{language}} code in {{pr_url}}.\n\nFocus on: {{focus_area}}\n\nProvide feedback on:\n- Code quality\n- Performance\n- Security concerns",
+    "variables": ["language", "pr_url", "focus_area"],
+    "is_public": true,
+    "version_number": 3,
+    "created_at": "2024-01-15T10:30:00Z",
+    "updated_at": "2024-02-20T14:22:00Z"
+  }
+}
+```
+
+## Implementation Details
+
+- The tool fetches the prompt and joins with `prompt_versions` to get the latest version
+- Variables are extracted using the `extractVariables()` utility which matches `{{variable}}` patterns
+- The regex supports spaces inside brackets: `{{ variable }}` is equivalent to `{{variable}}`
+- Access control is enforced at the application level (service-role client bypasses RLS)
+- Returns the latest version sorted by `version_number` descending
+
+## Error Codes
+
+<ResponseField name="-32602" type="INVALID_PARAMS">
+  The `prompt_id` parameter is missing or not a valid UUID
+</ResponseField>
+
+<ResponseField name="-32002" type="PROMPT_NOT_FOUND">
+  Prompt does not exist, is archived, or caller lacks permission to access it
+</ResponseField>
+
+<ResponseField name="-32603" type="INTERNAL_ERROR">
+  Database query failed or other internal error occurred
+</ResponseField>

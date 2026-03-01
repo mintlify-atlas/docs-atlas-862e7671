@@ -1,0 +1,498 @@
+---
+title: Other MCP Clients
+description: Connect PromptRepo to any MCP-compatible AI tool or framework
+---
+
+PromptRepo implements the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) specification, making it compatible with any MCP client—not just Claude Desktop and Claude Code.
+
+## What is MCP?
+
+The Model Context Protocol is an open standard for connecting AI applications to external data sources and tools. It uses JSON-RPC 2.0 over HTTP/HTTPS, allowing any MCP-compatible client to:
+
+- Discover available tools and resources
+- Invoke tools with structured parameters
+- Receive typed responses
+
+## PromptRepo MCP Endpoint
+
+All MCP clients connect to the same endpoint:
+
+```
+POST https://your-app-url/api/mcp
+Content-Type: application/json
+```
+
+### Authentication
+
+PromptRepo supports two authentication headers:
+
+<CodeGroup>
+
+```http Preferred: Bearer Token
+Authorization: Bearer YOUR_API_KEY
+```
+
+```http Alternative: Custom Header
+x-api-key: YOUR_API_KEY
+```
+
+</CodeGroup>
+
+### Anonymous Access
+
+If no API key is provided, the endpoint returns **public prompts only**. This is useful for:
+
+- Sharing prompt libraries publicly
+- Demo environments
+- Read-only integrations
+
+## Available Tools
+
+PromptRepo exposes four MCP tools:
+
+### 1. `list_prompts`
+
+Returns all prompts accessible to the authenticated user.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "list_prompts",
+  "params": {}
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "prompts": [
+      {
+        "id": "abc123",
+        "name": "code-review",
+        "content": "Review this {{language}} code for...",
+        "variables": ["language"],
+        "tags": ["development", "quality"],
+        "is_public": false
+      }
+    ]
+  }
+}
+```
+
+### 2. `get_prompt`
+
+Fetches a specific prompt by ID.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "get_prompt",
+  "params": {
+    "prompt_id": "abc123"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "id": "abc123",
+    "name": "code-review",
+    "content": "Review this {{language}} code for...",
+    "variables": ["language"],
+    "tags": ["development", "quality"],
+    "is_public": false,
+    "created_at": "2026-02-15T10:30:00Z",
+    "updated_at": "2026-02-20T14:45:00Z"
+  }
+}
+```
+
+### 3. `resolve_prompt`
+
+Fetches a prompt and substitutes `{{variable}}` placeholders with provided values.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "resolve_prompt",
+  "params": {
+    "prompt_id": "abc123",
+    "variables": {
+      "language": "TypeScript"
+    }
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "result": {
+    "original": "Review this {{language}} code for...",
+    "resolved": "Review this TypeScript code for...",
+    "variables_used": {
+      "language": "TypeScript"
+    }
+  }
+}
+```
+
+### 4. `search_prompts`
+
+Full-text search across prompt names, content, and tags.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "search_prompts",
+  "params": {
+    "query": "code review typescript"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "result": {
+    "prompts": [
+      {
+        "id": "abc123",
+        "name": "code-review",
+        "content": "Review this {{language}} code...",
+        "relevance_score": 0.92
+      }
+    ],
+    "total": 1
+  }
+}
+```
+
+## Error Handling
+
+All errors use JSON-RPC 2.0 error codes:
+
+| Code | Meaning | Common Cause |
+|------|---------|-------------|
+| `-32700` | Parse error | Invalid JSON in request body |
+| `-32600` | Invalid Request | Missing required fields |
+| `-32601` | Method not found | Unsupported tool name |
+| `-32602` | Invalid params | Wrong parameter types |
+| `4001` | Invalid API key | Key is incorrect or revoked |
+| `4004` | Not found | Prompt ID doesn't exist |
+| `5000` | Internal error | Server-side issue |
+
+**Example error response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "error": {
+    "code": 4001,
+    "message": "Invalid API key."
+  }
+}
+```
+
+## Compatible Clients
+
+### Cursor
+
+Cursor (the AI-powered code editor) supports MCP servers.
+
+**Configuration (`~/.cursor/mcp_config.json`):**
+```json
+{
+  "mcpServers": {
+    "promptrepo": {
+      "url": "https://your-app-url/api/mcp",
+      "headers": {
+        "x-api-key": "YOUR_API_KEY"
+      }
+    }
+  }
+}
+```
+
+Restart Cursor after saving the configuration.
+
+### Continue.dev
+
+Continue (VS Code extension) supports MCP.
+
+**Configuration (`~/.continue/config.json`):**
+```json
+{
+  "mcp": [
+    {
+      "name": "promptrepo",
+      "url": "https://your-app-url/api/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
+    }
+  ]
+}
+```
+
+### Custom MCP Clients
+
+You can build custom integrations using any HTTP client.
+
+**Example (Node.js with fetch):**
+```javascript
+const mcpClient = {
+  url: 'https://your-app-url/api/mcp',
+  apiKey: 'YOUR_API_KEY',
+  
+  async call(method, params = {}) {
+    const response = await fetch(this.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: Date.now(),
+        method,
+        params,
+      }),
+    });
+    
+    const result = await response.json();
+    
+    if (result.error) {
+      throw new Error(result.error.message);
+    }
+    
+    return result.result;
+  },
+};
+
+// Usage
+const prompts = await mcpClient.call('list_prompts');
+const resolved = await mcpClient.call('resolve_prompt', {
+  prompt_id: 'abc123',
+  variables: { language: 'Python' },
+});
+```
+
+**Example (Python):**
+```python
+import requests
+import json
+
+class MCPClient:
+    def __init__(self, url, api_key):
+        self.url = url
+        self.api_key = api_key
+        self.request_id = 0
+    
+    def call(self, method, params=None):
+        self.request_id += 1
+        
+        response = requests.post(
+            self.url,
+            headers={
+                'Content-Type': 'application/json',
+                'x-api-key': self.api_key,
+            },
+            json={
+                'jsonrpc': '2.0',
+                'id': self.request_id,
+                'method': method,
+                'params': params or {},
+            },
+        )
+        
+        result = response.json()
+        
+        if 'error' in result:
+            raise Exception(result['error']['message'])
+        
+        return result['result']
+
+# Usage
+client = MCPClient(
+    url='https://your-app-url/api/mcp',
+    api_key='YOUR_API_KEY',
+)
+
+prompts = client.call('list_prompts')
+resolved = client.call('resolve_prompt', {
+    'prompt_id': 'abc123',
+    'variables': {'language': 'Python'},
+})
+```
+
+## CORS Support
+
+The PromptRepo MCP endpoint includes CORS headers:
+
+```
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: POST, OPTIONS
+Access-Control-Allow-Headers: Content-Type, Authorization, x-api-key
+```
+
+This allows browser-based MCP clients to connect without CORS errors.
+
+**Preflight request example:**
+```bash
+curl -X OPTIONS https://your-app-url/api/mcp \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: x-api-key"
+```
+
+## Testing the Endpoint
+
+Use `curl` to test the MCP endpoint:
+
+### List Prompts
+```bash
+curl -X POST https://your-app-url/api/mcp \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "list_prompts",
+    "params": {}
+  }'
+```
+
+### Search Prompts
+```bash
+curl -X POST https://your-app-url/api/mcp \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "search_prompts",
+    "params": {
+      "query": "typescript"
+    }
+  }'
+```
+
+### Resolve Prompt
+```bash
+curl -X POST https://your-app-url/api/mcp \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "resolve_prompt",
+    "params": {
+      "prompt_id": "abc123",
+      "variables": {
+        "language": "Python"
+      }
+    }
+  }'
+```
+
+## Self-Hosting Considerations
+
+If you're self-hosting PromptRepo:
+
+### Environment Variables
+
+Ensure `SUPABASE_SERVICE_ROLE_KEY` is set in your deployment environment:
+
+```bash
+# Vercel
+vercel env add SUPABASE_SERVICE_ROLE_KEY
+
+# Railway
+railway variables set SUPABASE_SERVICE_ROLE_KEY=your-key
+
+# Docker
+docker run -e SUPABASE_SERVICE_ROLE_KEY=your-key ...
+```
+
+### Middleware Exclusion
+
+The MCP endpoint (`/api/mcp`) is automatically excluded from session authentication middleware, allowing API key-based auth to work without browser cookies.
+
+If you modify `src/middleware.ts`, ensure `/api/mcp` remains in the exclusion list:
+
+```typescript
+const publicPaths = [
+  '/auth',
+  '/p/',      // Public sharing links
+  '/api/mcp', // MCP endpoint (uses API key auth)
+];
+```
+
+### Rate Limiting
+
+For production deployments, consider adding rate limiting to the MCP endpoint:
+
+```typescript
+// src/app/api/mcp/route.ts
+import { ratelimit } from '@/lib/ratelimit';
+
+export async function POST(request: Request) {
+  const identifier = request.headers.get('x-api-key') || 'anonymous';
+  const { success } = await ratelimit.limit(identifier);
+  
+  if (!success) {
+    return jsonResponse(
+      { jsonrpc: '2.0', id: null, error: { code: 429, message: 'Too many requests' } },
+      429
+    );
+  }
+  
+  // ... rest of handler
+}
+```
+
+## Security Best Practices
+
+<Warning>
+**API Key Security:**
+- Store keys in environment variables or secret managers
+- Never commit keys to version control
+- Rotate keys regularly
+- Use separate keys per environment/client
+- Revoke compromised keys immediately from `/profile`
+</Warning>
+
+<Warning>
+**Endpoint Security:**
+- Always use HTTPS in production
+- Monitor API usage for anomalies
+- Implement rate limiting to prevent abuse
+- Validate all input parameters
+- Log authentication failures for auditing
+</Warning>
+
+## Next Steps
+
+- Read the [MCP protocol specification](https://modelcontextprotocol.io/)
+- Learn about [Claude Desktop setup](/mcp/claude-desktop)
+- Explore [Claude Code integration](/mcp/claude-code)
+- Review [API authentication](/api/authentication)

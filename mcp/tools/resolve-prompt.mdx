@@ -1,0 +1,142 @@
+---
+title: "resolve_prompt"
+description: "Resolves a prompt template by substituting variable placeholders with provided values"
+---
+
+The `resolve_prompt` tool fetches a prompt and performs variable substitution by replacing `{{variable}}` placeholders with caller-supplied values. This is the core tool for using prompts with dynamic content.
+
+## Access Control
+
+Same access rules as [`get_prompt`](/mcp/tools/get-prompt):
+
+- **Authenticated users**: Can resolve their own prompts (public or private) OR any other user's public prompts
+- **Anonymous callers**: Can only resolve public prompts
+- **Private prompts**: Returns `PROMPT_NOT_FOUND` for unauthorized access
+
+## Parameters
+
+<ParamField path="prompt_id" type="string" required>
+  UUID of the prompt to resolve. Must be a valid UUID format.
+</ParamField>
+
+<ParamField path="variables" type="object" default={{}}>
+  Key-value map of variable names to their replacement values. Keys should match the variable names in the template (without braces). All values must be strings.
+  
+  Example: `{ "language": "TypeScript", "pr_url": "https://github.com/..." }`
+</ParamField>
+
+## Response
+
+Returns a resolution result with the substituted content.
+
+<ResponseField name="resolved_content" type="string">
+  The prompt content after variable substitution. Placeholders with matching values are replaced; unresolved placeholders remain as `{{variable}}`.
+</ResponseField>
+
+<ResponseField name="unresolved_variables" type="string[]">
+  Array of variable names that were found in the template but had no matching entry in the `variables` parameter. Useful for detecting partial resolutions.
+</ResponseField>
+
+## Variable Resolution Rules
+
+1. **Exact match required**: Variable names are case-sensitive and must match exactly
+2. **Whitespace normalized**: `{{ var }}` and `{{var}}` both match key `"var"`
+3. **Partial resolution allowed**: If some variables are missing, they remain as `{{variable}}` in the output
+4. **Empty strings are valid**: Providing `""` as a value replaces the placeholder with an empty string
+5. **No nested braces**: The pattern `{{ {{nested}} }}` is not supported
+
+## Examples
+
+### Full Resolution
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": {
+    "name": "resolve_prompt",
+    "arguments": {
+      "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
+      "variables": {
+        "language": "TypeScript",
+        "pr_url": "https://github.com/user/repo/pull/123",
+        "focus_area": "error handling"
+      }
+    }
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "result": {
+    "resolved_content": "Please review the following TypeScript code in https://github.com/user/repo/pull/123.\n\nFocus on: error handling\n\nProvide feedback on:\n- Code quality\n- Performance\n- Security concerns",
+    "unresolved_variables": []
+  }
+}
+```
+
+### Partial Resolution
+
+When some variables are not provided, they remain in the output:
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "tools/call",
+  "params": {
+    "name": "resolve_prompt",
+    "arguments": {
+      "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
+      "variables": {
+        "language": "TypeScript"
+      }
+    }
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "result": {
+    "resolved_content": "Please review the following TypeScript code in {{pr_url}}.\n\nFocus on: {{focus_area}}\n\nProvide feedback on:\n- Code quality\n- Performance\n- Security concerns",
+    "unresolved_variables": ["pr_url", "focus_area"]
+  }
+}
+```
+
+## Implementation Details
+
+- Uses the `resolvePrompt()` utility function from `/src/lib/utils/variable-parser.ts:49`
+- Variable extraction uses regex: `/\{\{\s*([^}]+?)\s*\}\}/g`
+- The resolution preserves all formatting, whitespace, and line breaks
+- Variables are extracted before resolution to populate `unresolved_variables`
+- The same prompt content is fetched as in `get_prompt` (latest version from `prompt_versions`)
+
+## Error Codes
+
+<ResponseField name="-32602" type="INVALID_PARAMS">
+  Invalid parameters: `prompt_id` is not a valid UUID, or `variables` is not a valid string record
+</ResponseField>
+
+<ResponseField name="-32002" type="PROMPT_NOT_FOUND">
+  Prompt does not exist, is archived, or caller lacks permission to access it
+</ResponseField>
+
+<ResponseField name="-32603" type="INTERNAL_ERROR">
+  Database query failed or other internal error occurred
+</ResponseField>

@@ -1,0 +1,275 @@
+---
+title: Claude Code Setup
+description: Integrate PromptRepo with Claude Code for AI-powered development workflows
+---
+
+Claude Code (the web-based coding agent at [claude.ai/code](https://claude.ai/code)) supports MCP connections, allowing it to fetch and resolve your PromptRepo prompts during development sessions.
+
+## Prerequisites
+
+- Access to [Claude Code](https://claude.ai/code)
+- A PromptRepo deployment (local or production)
+- An API key from your PromptRepo `/profile` page
+
+## Step 1: Generate an API Key
+
+1. Open your PromptRepo instance
+2. Navigate to **Profile** (`/profile`)
+3. Click **Create API Key**
+4. Copy the generated key securely
+
+<Tip>
+API keys are shown only once. Store them in a secure password manager.
+</Tip>
+
+## Step 2: Locate the Configuration File
+
+Claude Code uses the same configuration file as Claude Desktop:
+
+<CodeGroup>
+
+```bash macOS
+~/Library/Application Support/Claude/claude_desktop_config.json
+```
+
+```bash Windows
+%APPDATA%\Claude\claude_desktop_config.json
+```
+
+```bash Linux
+~/.config/Claude/claude_desktop_config.json
+```
+
+</CodeGroup>
+
+<Note>
+Even though this file is named `claude_desktop_config.json`, it is used by both Claude Desktop and Claude Code.
+</Note>
+
+## Step 3: Add PromptRepo MCP Server
+
+Edit the configuration file and add your PromptRepo MCP server:
+
+```json
+{
+  "mcpServers": {
+    "promptrepo": {
+      "url": "https://your-app-url/api/mcp",
+      "headers": {
+        "x-api-key": "YOUR_API_KEY_HERE"
+      }
+    }
+  }
+}
+```
+
+**Configuration Parameters:**
+
+- `promptrepo`: A unique identifier for this MCP server (you can choose any name)
+- `url`: Your PromptRepo MCP endpoint (`/api/mcp`)
+- `x-api-key`: Your API key from Step 1
+
+### Local Development Setup
+
+If you're running PromptRepo locally:
+
+```json
+{
+  "mcpServers": {
+    "promptrepo-local": {
+      "url": "http://localhost:3000/api/mcp",
+      "headers": {
+        "x-api-key": "YOUR_LOCAL_API_KEY"
+      }
+    }
+  }
+}
+```
+
+### Multiple Environment Configuration
+
+You can connect to both local and production instances:
+
+```json
+{
+  "mcpServers": {
+    "promptrepo-prod": {
+      "url": "https://promptrepo.vercel.app/api/mcp",
+      "headers": {
+        "x-api-key": "PROD_API_KEY"
+      }
+    },
+    "promptrepo-local": {
+      "url": "http://localhost:3000/api/mcp",
+      "headers": {
+        "x-api-key": "LOCAL_API_KEY"
+      }
+    }
+  }
+}
+```
+
+## Step 4: Restart Claude Code
+
+1. Close all Claude Code browser tabs
+2. Clear browser cache (optional but recommended)
+3. Navigate to [claude.ai/code](https://claude.ai/code)
+4. Start a new session
+
+## Step 5: Verify Integration
+
+Test the connection by asking Claude Code to interact with your prompts:
+
+```
+List all my prompts from PromptRepo
+```
+
+Claude Code will invoke the `list_prompts` tool and display your prompt library.
+
+## Available Tools
+
+Claude Code can use these MCP tools:
+
+| Tool | Description | Example Usage |
+|------|-------------|---------------|
+| `list_prompts` | Fetches all your prompts | "Show my prompts" |
+| `get_prompt` | Retrieves a specific prompt by ID | "Get prompt with ID abc123" |
+| `resolve_prompt` | Substitutes variables in a prompt | "Resolve 'api-doc' with language=Python" |
+| `search_prompts` | Full-text search | "Search prompts for 'refactoring'" |
+
+## Common Workflows
+
+### 1. Code Review Template
+
+```
+Resolve the "code-review" prompt with:
+- language: "TypeScript"
+- focus_area: "error handling"
+
+Then use it to review the AuthService class.
+```
+
+### 2. Documentation Generation
+
+```
+Search my prompts for "api documentation" and use the top result 
+to document the /api/mcp route.
+```
+
+### 3. Refactoring with Templates
+
+```
+Get the "refactor-to-server-action" prompt and apply it to 
+the user profile update logic.
+```
+
+### 4. Test Generation
+
+```
+Resolve "unit-test-template" with:
+- framework: "Vitest"
+- component: "PromptCard"
+
+Generate comprehensive tests.
+```
+
+## Troubleshooting
+
+### Tools not appearing in Claude Code
+
+**Cause:** Configuration file not loaded or syntax error.
+
+**Fix:**
+1. Validate JSON syntax at [JSONLint](https://jsonlint.com/)
+2. Ensure file is saved in the correct location
+3. Hard-refresh Claude Code (Cmd+Shift+R / Ctrl+Shift+F5)
+4. Check browser console for MCP errors
+
+### "Invalid API key" error
+
+**Cause:** Key is incorrect, revoked, or from wrong environment.
+
+**Fix:**
+1. Verify you're using the correct key for the environment (local vs. prod)
+2. Generate a new key from `/profile`
+3. Update the configuration file
+4. Restart Claude Code
+
+### CORS errors in browser console
+
+**Cause:** MCP endpoint doesn't allow cross-origin requests.
+
+**Fix:**
+The PromptRepo MCP endpoint (`/api/mcp`) includes CORS headers by default. If you see this error:
+1. Verify you're using the correct URL (must include `/api/mcp`)
+2. Check if you're behind a proxy that strips CORS headers
+3. For self-hosted instances, ensure the route handler includes CORS headers
+
+### Connection timeout
+
+**Cause:** MCP endpoint is unreachable.
+
+**Fix:**
+1. Verify the URL is correct and the server is running
+2. For local development, ensure `npm run dev` is active
+3. Check network connectivity and firewall rules
+4. Test the endpoint directly:
+   ```bash
+   curl -X POST https://your-app-url/api/mcp \
+     -H "Content-Type: application/json" \
+     -H "x-api-key: YOUR_KEY" \
+     -d '{"jsonrpc":"2.0","id":1,"method":"list_prompts","params":{}}'
+   ```
+
+### Empty results from `list_prompts`
+
+**Cause:** No prompts exist, or you're authenticated as a different user.
+
+**Fix:**
+1. Verify the API key belongs to the correct user
+2. Create test prompts in PromptRepo
+3. Check that prompts aren't archived
+4. Ensure RLS policies are correctly configured (self-hosted only)
+
+## Development Tips
+
+### Using PromptRepo in Claude Code Projects
+
+1. **Project Context Loading:**
+   ```
+   Search my prompts for "nextjs" and use them to understand this codebase.
+   ```
+
+2. **Consistent Code Style:**
+   ```
+   Get the "typescript-conventions" prompt and apply it to all new files.
+   ```
+
+3. **PR Description Templates:**
+   ```
+   Resolve "pr-template" with changes="Added MCP integration" 
+   and generate a pull request description.
+   ```
+
+### Prompt Management Workflow
+
+1. Store reusable development prompts in PromptRepo
+2. Use variables (`{{language}}`, `{{framework}}`, etc.) for flexibility
+3. Tag prompts by project or domain ("backend", "frontend", "testing")
+4. Search and resolve prompts directly in Claude Code sessions
+
+## Security Considerations
+
+<Warning>
+- API keys grant full access to your prompt library
+- Never share API keys in code, screenshots, or chat transcripts
+- Use separate keys for each environment (dev/staging/prod)
+- Revoke compromised keys immediately from `/profile`
+</Warning>
+
+## Next Steps
+
+- Learn about [Claude Desktop integration](/mcp/claude-desktop)
+- Explore [other MCP-compatible clients](/mcp/other-clients)
+- Read the [MCP protocol specification](https://modelcontextprotocol.io/)
+- Check out [API key authentication](/mcp/authentication)

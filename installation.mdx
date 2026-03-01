@@ -1,0 +1,399 @@
+---
+title: Installation
+description: Set up PromptRepo for local development with Next.js 15, Supabase, and Docker.
+---
+
+# Installation
+
+This guide walks you through setting up PromptRepo for **local development**. You'll run Supabase locally using Docker, configure environment variables, and start the Next.js dev server.
+
+<Info>
+  PromptRepo is designed for both local development and cloud deployment. This guide covers local setup.
+</Info>
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+<Steps>
+  <Step title="Node.js 20+">
+    PromptRepo requires Node.js version 20 or higher.
+    
+    **Check your version:**
+    ```bash
+    node --version
+    ```
+    
+    If you need to install or upgrade Node.js, download it from [nodejs.org](https://nodejs.org/) or use a version manager like [nvm](https://github.com/nvm-sh/nvm).
+  </Step>
+  
+  <Step title="Docker">
+    Supabase Local Development requires Docker to run PostgreSQL, Auth, and other services.
+    
+    **Install Docker:**
+    - **Mac:** [Docker Desktop for Mac](https://docs.docker.com/desktop/install/mac-install/)
+    - **Windows:** [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/)
+    - **Linux:** [Docker Engine](https://docs.docker.com/engine/install/)
+    
+    **Verify Docker is running:**
+    ```bash
+    docker --version
+    ```
+  </Step>
+  
+  <Step title="Supabase CLI">
+    The Supabase CLI manages local development environments and database migrations.
+    
+    **Install globally via npm:**
+    ```bash
+    npm install -g supabase
+    ```
+    
+    **Verify installation:**
+    ```bash
+    supabase --version
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Docker must be running before you start Supabase Local Development. If Docker is not running, you'll see connection errors when running `npx supabase start`.
+</Warning>
+
+## Setup Steps
+
+### 1. Clone the Repository
+
+<Steps>
+  <Step title="Clone the repo">
+    ```bash
+    git clone <repo-url>
+    cd prompt-repo
+    ```
+    
+    Replace `<repo-url>` with the actual repository URL.
+  </Step>
+  
+  <Step title="Install dependencies">
+    <CodeGroup>
+      ```bash npm
+      npm install
+      ```
+      
+      ```bash pnpm
+      pnpm install
+      ```
+      
+      ```bash yarn
+      yarn install
+      ```
+    </CodeGroup>
+    
+    This installs all dependencies including Next.js 15, Supabase client libraries, Tailwind CSS 4, and testing tools.
+  </Step>
+</Steps>
+
+### 2. Start Supabase Local Development
+
+Supabase Local runs PostgreSQL, Auth, Storage, and other services in Docker containers.
+
+<Steps>
+  <Step title="Initialize Supabase">
+    ```bash
+    npx supabase start
+    ```
+    
+    <Info>
+      The first run downloads Docker images and applies migrations. This may take 2-5 minutes depending on your internet connection.
+    </Info>
+    
+    **Expected output:**
+    ```plaintext
+    Started supabase local development setup.
+    
+             API URL: http://127.0.0.1:54321
+          GraphQL URL: http://127.0.0.1:54321/graphql/v1
+       S3 Storage URL: http://127.0.0.1:54321/storage/v1/s3
+              DB URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+          Studio URL: http://127.0.0.1:54323
+        Inbucket URL: http://127.0.0.1:54324
+          JWT secret: super-secret-jwt-token-with-at-least-32-characters-long
+            anon key: eyJh...
+    service_role key: eyJh...
+    ```
+  </Step>
+  
+  <Step title="Copy the anon key and service_role key">
+    You'll need these values for your `.env.local` file. Save them somewhere safe.
+    
+    <Tip>
+      The Supabase Studio URL (`http://127.0.0.1:54323`) provides a web UI for browsing your database, running queries, and managing auth users.
+    </Tip>
+  </Step>
+</Steps>
+
+### 3. Configure Environment Variables
+
+<Steps>
+  <Step title="Create a .env.local file">
+    In the project root, create a file named `.env.local`:
+    
+    ```bash
+    touch .env.local
+    ```
+  </Step>
+  
+  <Step title="Add Supabase credentials">
+    Copy the following template and replace the placeholder values with your keys from Step 2:
+    
+    ```env .env.local
+    # Supabase Local Development
+    NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=your-local-anon-key-from-supabase-start
+    SUPABASE_SERVICE_ROLE_KEY=your-local-service-role-key-from-supabase-start
+    
+    # OAuth (Optional for local development)
+    # GITHUB_CLIENT_ID=your-github-client-id
+    # GITHUB_CLIENT_SECRET=your-github-client-secret
+    # GOOGLE_CLIENT_ID=your-google-client-id
+    # GOOGLE_CLIENT_SECRET=your-google-client-secret
+    ```
+    
+    <Info>
+      **SUPABASE_SERVICE_ROLE_KEY** is required for the MCP server endpoint (`/api/mcp`). This key bypasses Row-Level Security (RLS) and should **never** be exposed to the client.
+    </Info>
+  </Step>
+  
+  <Step title="OAuth setup (optional)">
+    If you want to test GitHub or Google OAuth locally:
+    
+    1. Create OAuth apps on [GitHub](https://github.com/settings/developers) or [Google Cloud Console](https://console.cloud.google.com/)
+    2. Set the callback URL to `http://127.0.0.1:54321/auth/v1/callback`
+    3. Add the client ID and secret to `.env.local`
+    4. Restart Supabase: `npx supabase stop && npx supabase start`
+    
+    <Warning>
+      For local development, you can skip OAuth and use email/password authentication. OAuth is recommended for production.
+    </Warning>
+  </Step>
+</Steps>
+
+### 4. Run Database Migrations
+
+PromptRepo includes versioned SQL migrations in `supabase/migrations/`. These are automatically applied when you run `npx supabase start`, but you can verify them:
+
+<Steps>
+  <Step title="Check migration status">
+    ```bash
+    npx supabase migration list
+    ```
+    
+    You should see all migrations marked as **Applied**:
+    ```plaintext
+    20260208000000_init_foundation.sql [Applied]
+    20260208000001_prompt_schema.sql [Applied]
+    20260208000002_search_index.sql [Applied]
+    20260208000003_collections.sql [Applied]
+    20260208000004_prompt_snapshots.sql [Applied]
+    20260208000005_update_search_rpc.sql [Applied]
+    20260226000006_prompt_lifecycle_archive.sql [Applied]
+    20260227000007_prompt_public_sharing.sql [Applied]
+    20260301000008_user_api_keys.sql [Applied]
+    ```
+  </Step>
+  
+  <Step title="Reset database (if needed)">
+    If you encounter migration errors or want to start fresh:
+    
+    ```bash
+    npx supabase db reset
+    ```
+    
+    <Warning>
+      This **deletes all local data** and re-applies migrations. Only use this during development.
+    </Warning>
+  </Step>
+</Steps>
+
+### 5. Start the Next.js Dev Server
+
+<Steps>
+  <Step title="Run the dev server">
+    <CodeGroup>
+      ```bash npm
+      npm run dev
+      ```
+      
+      ```bash pnpm
+      pnpm dev
+      ```
+      
+      ```bash yarn
+      yarn dev
+      ```
+    </CodeGroup>
+    
+    **Expected output:**
+    ```plaintext
+    ▲ Next.js 15.5.12
+    - Local:        http://localhost:3000
+    - Network:      http://192.168.1.x:3000
+    
+    ✓ Ready in 2.3s
+    ```
+  </Step>
+  
+  <Step title="Open the app">
+    Navigate to [http://localhost:3000](http://localhost:3000) in your browser.
+    
+    <Tip>
+      Press `Cmd+K` (Mac) or `Ctrl+K` (Windows/Linux) to open the search modal immediately.
+    </Tip>
+  </Step>
+</Steps>
+
+## Verify the Installation
+
+<Steps>
+  <Step title="Sign up with email/password">
+    1. Go to [http://localhost:3000/auth/login](http://localhost:3000/auth/login)
+    2. Click **Sign Up**
+    3. Enter an email and password
+    4. Click **Sign Up**
+  </Step>
+  
+  <Step title="Confirm your email (Mailpit)">
+    Supabase Local uses **Mailpit** to capture auth emails:
+    
+    1. Open [http://localhost:54324](http://localhost:54324) in a new tab
+    2. You'll see a confirmation email from Supabase
+    3. Click the confirmation link in the email body
+    4. You'll be redirected to the PromptRepo dashboard at `http://localhost:3000`
+    
+    <Info>
+      Mailpit is an email testing tool that captures all outbound emails from Supabase. It's only available in local development.
+    </Info>
+  </Step>
+  
+  <Step title="Create a test prompt">
+    1. Click **Create Prompt**
+    2. Fill in the form:
+       - **Title:** Test Prompt
+       - **Content:** Hello {{name}}, welcome to PromptRepo!
+    3. Click **Create Prompt**
+    
+    You should see the prompt detail page with a variable resolution section.
+  </Step>
+  
+  <Step title="Test search">
+    Press `Cmd+K` and search for "test". Your new prompt should appear in the results.
+  </Step>
+</Steps>
+
+## Common Issues
+
+### Docker Not Running
+
+**Symptom:** `npx supabase start` fails with "Cannot connect to Docker daemon"
+
+**Solution:** Start Docker Desktop and wait for it to fully initialize, then retry `npx supabase start`.
+
+### Port Conflicts
+
+**Symptom:** `npx supabase start` fails with "Port 54321 is already in use"
+
+**Solution:** Another service is using Supabase's default ports. Stop the conflicting service or run:
+
+```bash
+npx supabase stop
+npx supabase start
+```
+
+### Missing Environment Variables
+
+**Symptom:** Next.js throws "Missing environment variable" errors
+
+**Solution:** Ensure `.env.local` exists in the project root with all required variables (see Step 3).
+
+### Migrations Not Applied
+
+**Symptom:** Database tables don't exist or queries fail
+
+**Solution:** Run `npx supabase db reset` to re-apply all migrations.
+
+## Next Steps
+
+Now that PromptRepo is running locally, you can:
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Create your first prompt with dynamic variables
+  </Card>
+  
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Learn about the two-table versioning pattern and data model
+  </Card>
+  
+  <Card title="MCP Server" icon="plug" href="/features/mcp-server">
+    Connect Claude Desktop or other AI agents to your local instance
+  </Card>
+  
+  <Card title="Testing" icon="flask" href="/development/testing">
+    Run the test suite with Vitest
+  </Card>
+</CardGroup>
+
+## Development Workflow
+
+### Running Tests
+
+<CodeGroup>
+  ```bash npm
+  npm test           # Run all tests
+  npm run test:ui    # Open Vitest UI
+  ```
+  
+  ```bash pnpm
+  pnpm test
+  pnpm test:ui
+  ```
+  
+  ```bash yarn
+  yarn test
+  yarn test:ui
+  ```
+</CodeGroup>
+
+### Linting
+
+```bash
+npm run lint
+```
+
+### Building for Production
+
+```bash
+npm run build
+```
+
+<Info>
+  The production build runs type checking, linting, and creates an optimized bundle. Fix any errors before deploying.
+</Info>
+
+## Stopping Local Services
+
+When you're done developing:
+
+```bash
+# Stop Supabase (keeps data)
+npx supabase stop
+
+# Stop Supabase and delete data
+npx supabase stop --no-backup
+```
+
+The Next.js dev server stops automatically when you close the terminal or press `Ctrl+C`.
+
+<Tip>
+  Use `npx supabase status` to check which services are running and their URLs.
+</Tip>

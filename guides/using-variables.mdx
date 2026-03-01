@@ -1,0 +1,263 @@
+---
+title: Using Variables
+description: Learn how to create dynamic prompts with variables in PromptRepo
+---
+
+Variables make your prompts dynamic and reusable by allowing you to substitute values at runtime. This is perfect for prompts that need customization for different contexts.
+
+## Variable Syntax
+
+PromptRepo uses a double-curly-brace syntax for variables:
+
+```
+{{variableName}}
+```
+
+<Note>
+  Variable names are case-sensitive. `{{userName}}` and `{{username}}` are treated as different variables.
+</Note>
+
+## Creating Prompts with Variables
+
+<Steps>
+  <Step title="Add Variables to Content">
+    When creating or editing a prompt, include variables using the `{{variableName}}` syntax:
+    
+    ```
+    You are a helpful assistant specializing in {{topic}}.
+    Please help {{userName}} with their question about {{subject}}.
+    ```
+    
+    In this example, there are three variables:
+    - `topic`
+    - `userName`
+    - `subject`
+  </Step>
+  
+  <Step title="Save Your Prompt">
+    Save the prompt normally. PromptRepo automatically detects all variables in the content.
+  </Step>
+  
+  <Step title="Access the Resolve Tab">
+    When you view a prompt with variables, a **Resolve** tab appears automatically in the prompt detail view.
+  </Step>
+</Steps>
+
+## Resolving Variables
+
+The Resolve tab provides a form to fill in variable values and preview the final output.
+
+<Steps>
+  <Step title="Open the Resolve Tab">
+    Click the **Resolve** tab in your prompt detail view.
+    
+    <Note>
+      The Resolve tab only appears if your prompt contains at least one variable.
+    </Note>
+  </Step>
+  
+  <Step title="Fill in Variable Values">
+    The system displays an input field for each detected variable. Enter the values you want to substitute:
+    
+    - **topic**: `Python programming`
+    - **userName**: `Alex`
+    - **subject**: `list comprehensions`
+  </Step>
+  
+  <Step title="Preview Resolved Content">
+    As you type, the resolved content updates in real-time below the form, showing:
+    
+    ```
+    You are a helpful assistant specializing in Python programming.
+    Please help Alex with their question about list comprehensions.
+    ```
+  </Step>
+  
+  <Step title="Copy Resolved Prompt">
+    Click the **Copy** button to copy the resolved prompt to your clipboard, ready to use in your application or AI tool.
+  </Step>
+</Steps>
+
+## Saving Variable Snapshots
+
+Snapshots let you save specific variable combinations for reuse.
+
+<Steps>
+  <Step title="Fill in Variables">
+    In the Resolve tab, enter values for all variables you want to save.
+  </Step>
+  
+  <Step title="Save Snapshot">
+    Click the **Save Snapshot** button (if available) to store this combination.
+    
+    Snapshots preserve:
+    - All variable values
+    - The prompt version they were created with
+    - A timestamp
+  </Step>
+  
+  <Step title="View Saved Snapshots">
+    Switch to the **Snapshots** tab to see all saved variable combinations for this prompt.
+  </Step>
+  
+  <Step title="Load a Snapshot">
+    Click on any snapshot to automatically load its values into the Resolve tab.
+  </Step>
+</Steps>
+
+<Tip>
+  Use snapshots to save commonly-used variable combinations, like different user personas or test scenarios.
+</Tip>
+
+## Variable Naming Best Practices
+
+### Use Descriptive Names
+
+Good:
+```
+{{userRole}}
+{{targetAudience}}
+{{outputFormat}}
+```
+
+Poor:
+```
+{{x}}
+{{temp}}
+{{thing}}
+```
+
+### Use Consistent Naming Conventions
+
+Choose a convention and stick to it:
+
+- **camelCase**: `{{userName}}`, `{{maxTokens}}`
+- **snake_case**: `{{user_name}}`, `{{max_tokens}}`
+- **kebab-case**: `{{user-name}}`, `{{max-tokens}}`
+
+<Note>
+  Spaces inside variable names are supported: `{{user name}}` is valid, but not recommended for clarity.
+</Note>
+
+## Advanced Variable Usage
+
+### Optional Variables
+
+If a variable is not provided when resolving, the original `{{variableName}}` placeholder remains in the output:
+
+```
+Input: "Hello {{name}}, welcome to {{location}}!"
+Provided: name = "Sam"
+Output: "Hello Sam, welcome to {{location}}!"
+```
+
+<Tip>
+  This behavior allows you to partially resolve prompts and fill in remaining variables later.
+</Tip>
+
+### Variables in Context
+
+Variables can appear multiple times in a single prompt:
+
+```
+Task: Analyze {{topic}}
+
+Please provide:
+1. An overview of {{topic}}
+2. Common challenges in {{topic}}
+3. Best practices for {{topic}}
+```
+
+All instances of `{{topic}}` will be replaced with the same value.
+
+### Multiline Variables
+
+Variable values can span multiple lines:
+
+```
+Prompt content:
+{{instructions}}
+
+Variable value:
+- Step 1: Do this
+- Step 2: Do that
+- Step 3: Finish
+```
+
+## Using Variables via API
+
+If you're accessing prompts via the MCP (Model Context Protocol) API:
+
+```bash
+curl -X POST https://your-app-url/api/mcp \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "method": "tools/call",
+    "params": {
+      "name": "resolve_prompt",
+      "arguments": {
+        "promptId": "abc-123",
+        "variables": {
+          "topic": "Python",
+          "userName": "Alex"
+        }
+      }
+    }
+  }'
+```
+
+## Common Variable Use Cases
+
+### User Personalization
+```
+Hello {{userName}}, welcome back!
+Your role: {{userRole}}
+```
+
+### Template Parameters
+```
+Generate a {{contentType}} about {{topic}}
+in {{tone}} tone for {{audience}}.
+```
+
+### Dynamic Instructions
+```
+Analyze the following {{fileType}} file:
+{{fileContent}}
+
+Focus on: {{analysisAspects}}
+```
+
+### Configuration
+```
+Model: {{modelName}}
+Max tokens: {{maxTokens}}
+Temperature: {{temperature}}
+```
+
+## Troubleshooting
+
+### Variables Not Detected
+
+Ensure you're using the correct syntax with double curly braces:
+- Correct: `{{variable}}`
+- Incorrect: `{variable}`, `${variable}`, `[[variable]]`
+
+### Nested Braces
+
+Nested braces are not supported:
+```
+❌ {{ {{nested}} }}
+✓ {{outerVariable}}
+```
+
+### Special Characters
+
+Variable names support most characters but avoid using:
+- Closing braces: `}}`
+- Only whitespace
+
+<Note>
+  If you need literal double curly braces in your content, this is currently not supported. Variables will always be parsed.
+</Note>

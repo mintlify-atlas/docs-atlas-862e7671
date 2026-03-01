@@ -1,0 +1,420 @@
+---
+title: MCP Configuration
+description: Connect AI clients to PromptRepo's MCP server
+---
+
+## Overview
+
+Once you've [generated an API key](/mcp/authentication), you can configure MCP-compatible clients to connect to PromptRepo. This page covers setup for:
+
+- **Claude Desktop** (Anthropic's native app)
+- **Claude Code** (VS Code extension and web editor)
+- **Generic MCP clients** (cURL, Postman, custom scripts)
+
+<Note>
+All configurations require your deployed PromptRepo URL (e.g., `https://your-app.vercel.app`) and a valid API key.
+</Note>
+
+## Claude Desktop Configuration
+
+Claude Desktop reads MCP server configurations from a JSON file in your home directory.
+
+<Steps>
+  <Step title="Locate Config File">
+    The config file location depends on your operating system:
+    
+    - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+    - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+    - **Linux**: `~/.config/Claude/claude_desktop_config.json`
+    
+    <Tip>
+    If the file doesn't exist, create it with an empty `{ "mcpServers": {} }` object.
+    </Tip>
+  </Step>
+  
+  <Step title="Add PromptRepo Server">
+    Edit the file to include your PromptRepo MCP server:
+    
+    ```json title="claude_desktop_config.json"
+    {
+      "mcpServers": {
+        "promptrepo": {
+          "url": "https://your-app.vercel.app/api/mcp",
+          "headers": {
+            "x-api-key": "pr_live_abc123def456ghi789jkl012mno345pqr678stu901vwx234yz"
+          }
+        }
+      }
+    }
+    ```
+    
+    **Replace:**
+    - `your-app.vercel.app` → Your actual deployment URL
+    - `pr_live_abc123...` → Your API key from `/profile`
+  </Step>
+  
+  <Step title="Restart Claude Desktop">
+    Close and reopen Claude Desktop for changes to take effect.
+  </Step>
+  
+  <Step title="Verify Connection">
+    In a new conversation, type:
+    
+    > "Search my PromptRepo for React hooks"
+    
+    Claude should call the `search_prompts` tool and return results.
+  </Step>
+</Steps>
+
+<Warning>
+**Security**: The `claude_desktop_config.json` file contains your plaintext API key. Ensure it's readable only by your user account:
+
+```bash
+chmod 600 ~/Library/Application\ Support/Claude/claude_desktop_config.json
+```
+</Warning>
+
+## Claude Code Configuration
+
+Claude Code (the VS Code extension and web editor) uses the same configuration format.
+
+### VS Code Extension
+
+<Steps>
+  <Step title="Open Settings">
+    Press `Cmd+Shift+P` (macOS) or `Ctrl+Shift+P` (Windows/Linux) and search for **"Claude Code: Edit MCP Settings"**.
+  </Step>
+  
+  <Step title="Add Server Config">
+    Add your PromptRepo server to the `mcpServers` object:
+    
+    ```json
+    {
+      "mcpServers": {
+        "promptrepo": {
+          "url": "https://your-app.vercel.app/api/mcp",
+          "headers": {
+            "x-api-key": "pr_live_abc123def456ghi789jkl012mno345pqr678stu901vwx234yz"
+          }
+        }
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="Reload Window">
+    Press `Cmd+Shift+P` → **"Developer: Reload Window"** to apply changes.
+  </Step>
+</Steps>
+
+### Web Editor (claude.ai/code)
+
+<Steps>
+  <Step title="Open Project Settings">
+    Click the **gear icon** in the top-right corner of the editor.
+  </Step>
+  
+  <Step title="Navigate to MCP Servers">
+    Select the **"MCP Servers"** tab.
+  </Step>
+  
+  <Step title="Add Server">
+    Click **"Add Server"** and fill in:
+    
+    - **Name**: `promptrepo`
+    - **URL**: `https://your-app.vercel.app/api/mcp`
+    - **Headers**: 
+      ```json
+      { "x-api-key": "pr_live_abc123..." }
+      ```
+  </Step>
+  
+  <Step title="Save and Test">
+    Click **"Save"**. In the chat, ask Claude to list your prompts:
+    
+    > "List my prompts from PromptRepo"
+  </Step>
+</Steps>
+
+## Multiple Servers (Advanced)
+
+You can connect multiple PromptRepo instances (e.g., production and staging) or other MCP servers:
+
+```json title="claude_desktop_config.json"
+{
+  "mcpServers": {
+    "promptrepo-prod": {
+      "url": "https://app.promptrepo.com/api/mcp",
+      "headers": {
+        "x-api-key": "pr_live_production_key"
+      }
+    },
+    "promptrepo-staging": {
+      "url": "https://staging.promptrepo.com/api/mcp",
+      "headers": {
+        "x-api-key": "pr_live_staging_key"
+      }
+    },
+    "other-mcp-server": {
+      "url": "https://example.com/mcp",
+      "headers": {
+        "authorization": "Bearer other_api_key"
+      }
+    }
+  }
+}
+```
+
+<Tip>
+Claude will automatically detect and use all configured servers. Prefix your requests with the server name to disambiguate:
+
+> "Search `promptrepo-prod` for authentication flows"
+</Tip>
+
+## Environment Variable Substitution
+
+Some MCP clients support environment variable expansion in config files:
+
+```json title="claude_desktop_config.json"
+{
+  "mcpServers": {
+    "promptrepo": {
+      "url": "${PROMPTREPO_URL}/api/mcp",
+      "headers": {
+        "x-api-key": "${PROMPTREPO_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+Then set environment variables before launching Claude:
+
+```bash
+export PROMPTREPO_URL=https://your-app.vercel.app
+export PROMPTREPO_API_KEY=pr_live_abc123...
+open -a "Claude"  # macOS
+```
+
+<Warning>
+**Compatibility**: Environment variable substitution is **not** supported in all MCP clients. Test thoroughly or use hardcoded values.
+</Warning>
+
+## Testing with cURL
+
+You can test your MCP server without an AI client using cURL:
+
+<CodeGroup>
+```bash List Prompts
+curl -X POST https://your-app.vercel.app/api/mcp \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: pr_live_abc123def456ghi789jkl012mno345pqr678stu901vwx234yz" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "list_prompts",
+      "arguments": { "limit": 5 }
+    }
+  }'
+```
+
+```bash Get Prompt
+curl -X POST https://your-app.vercel.app/api/mcp \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer pr_live_abc123def456ghi789jkl012mno345pqr678stu901vwx234yz" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/call",
+    "params": {
+      "name": "get_prompt",
+      "arguments": {
+        "prompt_id": "550e8400-e29b-41d4-a716-446655440000"
+      }
+    }
+  }'
+```
+
+```bash Resolve Prompt
+curl -X POST https://your-app.vercel.app/api/mcp \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: pr_live_abc123def456ghi789jkl012mno345pqr678stu901vwx234yz" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+      "name": "resolve_prompt",
+      "arguments": {
+        "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
+        "variables": {
+          "language": "TypeScript",
+          "framework": "React"
+        }
+      }
+    }
+  }'
+```
+
+```bash Search Prompts
+curl -X POST https://your-app.vercel.app/api/mcp \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: pr_live_abc123def456ghi789jkl012mno345pqr678stu901vwx234yz" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "tools/call",
+    "params": {
+      "name": "search_prompts",
+      "arguments": {
+        "query": "API integration",
+        "limit": 10
+      }
+    }
+  }'
+```
+</CodeGroup>
+
+### Expected Response Format
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"prompts\": [\n    {\n      \"id\": \"550e8400-e29b-41d4-a716-446655440000\",\n      \"title\": \"React Hook Template\",\n      \"description\": \"Generate custom React hooks\",\n      \"variables\": [\"hookName\", \"stateType\"]\n    }\n  ]\n}"
+      }
+    ],
+    "isError": false
+  }
+}
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Error: Invalid API key" icon="triangle-exclamation">
+    **Cause**: The API key is incorrect, revoked, or improperly formatted.
+    
+    **Solution**:
+    1. Verify the key in `/profile` (check last 8 characters)
+    2. Ensure no extra spaces or line breaks in the config file
+    3. Generate a new key and update the config
+  </Accordion>
+  
+  <Accordion title="Error: Method not found" icon="question">
+    **Cause**: The `method` field in the JSON-RPC request doesn't match a supported tool.
+    
+    **Solution**:
+    - Use `"method": "tools/call"` for all tool invocations
+    - Pass the actual tool name in `params.name` (e.g., `"list_prompts"`)
+    - Supported tools: `list_prompts`, `get_prompt`, `resolve_prompt`, `search_prompts`
+  </Accordion>
+  
+  <Accordion title="Claude doesn't call MCP tools" icon="robot">
+    **Cause**: The MCP server isn't registered or Claude doesn't recognize the request.
+    
+    **Solution**:
+    1. Restart Claude Desktop/VS Code after editing config
+    2. Use explicit phrasing: "Search my PromptRepo for..."
+    3. Check Claude's developer console for connection errors
+  </Accordion>
+  
+  <Accordion title="CORS errors in browser-based clients" icon="globe">
+    **Cause**: PromptRepo's MCP endpoint has CORS enabled, but your deployment might have middleware blocking it.
+    
+    **Solution**:
+    - Verify `Access-Control-Allow-Origin: *` in response headers
+    - Check that `/api/mcp` is excluded from auth middleware (see `src/middleware.ts`)
+  </Accordion>
+  
+  <Accordion title="Connection timeout" icon="clock">
+    **Cause**: Your deployment URL is incorrect or the server is down.
+    
+    **Solution**:
+    1. Test the endpoint with cURL (see examples above)
+    2. Verify the URL has no typos or trailing slashes
+    3. Check deployment status in Vercel/Railway dashboard
+  </Accordion>
+</AccordionGroup>
+
+## Production Environment Variables
+
+<Warning>
+Do **not** skip this step when deploying to production!
+</Warning>
+
+The MCP endpoint requires the `SUPABASE_SERVICE_ROLE_KEY` environment variable to bypass RLS and authenticate users via API keys.
+
+<Steps>
+  <Step title="Get Service Role Key">
+    In your Supabase dashboard:
+    1. Go to **Settings → API**
+    2. Copy the `service_role` key (not the `anon` key)
+  </Step>
+  
+  <Step title="Add to Deployment">
+    In Vercel/Railway/Render:
+    1. Navigate to your project settings
+    2. Add environment variable:
+       - **Name**: `SUPABASE_SERVICE_ROLE_KEY`
+       - **Value**: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...` (your service role key)
+  </Step>
+  
+  <Step title="Redeploy">
+    Trigger a redeployment to apply the environment variable.
+  </Step>
+</Steps>
+
+Without this key, the MCP endpoint will return `INTERNAL_ERROR` for all authenticated requests.
+
+## Implementation Reference
+
+The MCP route handler is implemented in `src/app/api/mcp/route.ts`:
+
+```ts title="src/app/api/mcp/route.ts" {6-8,80-84}
+export async function POST(request: Request): Promise<Response> {
+  // Step 1: Resolve caller identity from API key headers
+  let userId: string | null = null;
+
+  const authHeader = request.headers.get('Authorization');
+  const xApiKeyHeader = request.headers.get('x-api-key');
+
+  // Prefer `Authorization: Bearer <key>` over `x-api-key`.
+  const rawKey =
+    authHeader?.startsWith('Bearer ')
+      ? authHeader.slice('Bearer '.length).trim()
+      : (xApiKeyHeader?.trim() ?? null);
+
+  if (rawKey) {
+    const result = await verifyApiKey(rawKey);
+    if (!result.valid) {
+      return rpcError(null, MCP_ERROR_CODES.INVALID_API_KEY, 'Invalid API key.');
+    }
+    userId = result.userId;
+  }
+  // If no key header is present, userId stays null → anonymous access
+
+  // Step 2-5: Parse, validate, dispatch, return response
+  // ...
+}
+```
+
+See the full source at `src/app/api/mcp/route.ts:71-138`.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Overview" icon="book" href="/mcp/overview">
+    Learn about MCP protocol and available tools
+  </Card>
+  
+  <Card title="API Reference" icon="code" href="/api-reference">
+    Detailed JSON-RPC schemas and error codes
+  </Card>
+</CardGroup>

@@ -1,0 +1,503 @@
+---
+title: "Collections Actions"
+description: "Server actions for managing prompt collections and organization"
+---
+
+## Overview
+
+The collections module provides server actions for organizing prompts into user-defined groups. Collections help users categorize and manage related prompts together. All actions require authentication.
+
+## createCollection
+
+Creates a new collection owned by the authenticated user.
+
+**Location:** `src/features/collections/actions.ts:8`
+
+```typescript
+export async function createCollection(
+  input: CreateCollectionInput
+): Promise<{
+  data?: Collection;
+  error?: string;
+  details?: ZodFormattedError;
+}>
+```
+
+### Parameters
+
+<ParamField path="input" type="CreateCollectionInput" required>
+  Collection data to create
+
+  <ParamField path="input.name" type="string" required>
+    Collection name (1-50 characters)
+  </ParamField>
+
+  <ParamField path="input.description" type="string">
+    Optional description (max 200 characters)
+  </ParamField>
+</ParamField>
+
+### Returns
+
+<ResponseField name="result" type="object">
+  <ResponseField name="data" type="Collection">
+    The newly created collection object (returned on success)
+    <ResponseField name="id" type="string">
+      Collection UUID
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      Collection name
+    </ResponseField>
+    <ResponseField name="description" type="string | null">
+      Collection description
+    </ResponseField>
+    <ResponseField name="user_id" type="string">
+      UUID of the owner
+    </ResponseField>
+    <ResponseField name="created_at" type="string">
+      ISO timestamp
+    </ResponseField>
+    <ResponseField name="updated_at" type="string">
+      ISO timestamp
+    </ResponseField>
+  </ResponseField>
+
+  <ResponseField name="error" type="string">
+    Error message if creation failed
+  </ResponseField>
+
+  <ResponseField name="details" type="ZodFormattedError">
+    Detailed validation errors if input was invalid
+  </ResponseField>
+</ResponseField>
+
+### Validation
+
+Input is validated using the `createCollectionSchema` Zod schema:
+
+```typescript
+const createCollectionSchema = z.object({
+  name: z.string().min(1, "Name is required").max(50, "Name is too long"),
+  description: z.string().max(200, "Description is too long").optional(),
+});
+```
+
+### Example
+
+```typescript
+import { createCollection } from '@/features/collections/actions';
+
+const result = await createCollection({
+  name: 'Code Review Prompts',
+  description: 'Templates for reviewing pull requests and code quality',
+});
+
+if (result.error) {
+  console.error('Failed:', result.error);
+  if (result.details) {
+    console.error('Validation errors:', result.details);
+  }
+} else if (result.data) {
+  console.log('Created collection:', result.data.id);
+}
+```
+
+### Behavior
+
+- Automatically assigns the authenticated user as the owner
+- Returns `{ error: "Unauthorized" }` if user is not logged in
+- Revalidates the `/prompts` page cache after creation
+
+---
+
+## getCollections
+
+Retrieves all collections accessible to the authenticated user.
+
+**Location:** `src/features/collections/actions.ts:41`
+
+```typescript
+export async function getCollections(): Promise<{
+  data: Collection[];
+}>
+```
+
+### Parameters
+
+None
+
+### Returns
+
+<ResponseField name="result" type="object">
+  <ResponseField name="data" type="Collection[]" required>
+    Array of collection objects, ordered alphabetically by name. Returns empty array `[]` if error occurs or no collections exist.
+  </ResponseField>
+</ResponseField>
+
+### Example
+
+```typescript
+import { getCollections } from '@/features/collections/actions';
+
+const { data } = await getCollections();
+
+console.log(`You have ${data.length} collections`);
+data.forEach(collection => {
+  console.log(`- ${collection.name}`);
+});
+```
+
+### Behavior
+
+- Returns collections ordered by `name` (ascending)
+- Respects Row-Level Security (RLS) policies - users only see their own collections
+- Returns empty array on database errors (errors are logged to console)
+
+---
+
+## updateCollection
+
+Updates the name and/or description of an existing collection.
+
+**Location:** `src/features/collections/actions.ts:58`
+
+```typescript
+export async function updateCollection(
+  id: string,
+  input: CreateCollectionInput
+): Promise<{
+  error: string | null;
+  details?: ZodFormattedError;
+}>
+```
+
+### Parameters
+
+<ParamField path="id" type="string" required>
+  UUID of the collection to update
+</ParamField>
+
+<ParamField path="input" type="CreateCollectionInput" required>
+  Updated collection data
+
+  <ParamField path="input.name" type="string" required>
+    New collection name (1-50 characters)
+  </ParamField>
+
+  <ParamField path="input.description" type="string">
+    New description (max 200 characters)
+  </ParamField>
+</ParamField>
+
+### Returns
+
+<ResponseField name="result" type="object">
+  <ResponseField name="error" type="string | null" required>
+    `null` if update succeeded, error message otherwise
+  </ResponseField>
+
+  <ResponseField name="details" type="ZodFormattedError">
+    Detailed validation errors if input was invalid
+  </ResponseField>
+</ResponseField>
+
+### Example
+
+```typescript
+import { updateCollection } from '@/features/collections/actions';
+
+const result = await updateCollection('collection-uuid', {
+  name: 'Updated Collection Name',
+  description: 'New description',
+});
+
+if (result.error) {
+  console.error('Update failed:', result.error);
+} else {
+  console.log('Collection updated successfully');
+}
+```
+
+### Behavior
+
+- Updates `name`, `description`, and `updated_at` fields
+- The `updated_at` timestamp is set to the current time
+- Revalidates the `/prompts` page cache after update
+- RLS policies ensure users can only update their own collections
+
+---
+
+## deleteCollection
+
+Permanently deletes a collection.
+
+**Location:** `src/features/collections/actions.ts:84`
+
+```typescript
+export async function deleteCollection(
+  id: string
+): Promise<{ error: string | null }>
+```
+
+### Parameters
+
+<ParamField path="id" type="string" required>
+  UUID of the collection to delete
+</ParamField>
+
+### Returns
+
+<ResponseField name="result" type="object">
+  <ResponseField name="error" type="string | null" required>
+    `null` if deletion succeeded, error message otherwise
+  </ResponseField>
+</ResponseField>
+
+### Example
+
+```typescript
+import { deleteCollection } from '@/features/collections/actions';
+
+const result = await deleteCollection('collection-uuid');
+
+if (result.error) {
+  console.error('Delete failed:', result.error);
+} else {
+  console.log('Collection deleted');
+}
+```
+
+<Warning>
+Deleting a collection removes it permanently but does NOT delete the prompts within it. Prompts are only removed from the collection via the `collection_prompts` join table.
+</Warning>
+
+### Behavior
+
+- Permanently removes the collection record
+- Cascade deletes entries in `collection_prompts` join table (handled by database foreign key constraints)
+- Prompts themselves are preserved
+- Revalidates the `/prompts` page cache after deletion
+- RLS policies ensure users can only delete their own collections
+
+---
+
+## addToCollection
+
+Adds a prompt to a collection.
+
+**Location:** `src/features/collections/actions.ts:101`
+
+```typescript
+export async function addToCollection(
+  promptId: string,
+  collectionId: string
+): Promise<{ error: string | null }>
+```
+
+### Parameters
+
+<ParamField path="promptId" type="string" required>
+  UUID of the prompt to add
+</ParamField>
+
+<ParamField path="collectionId" type="string" required>
+  UUID of the collection to add the prompt to
+</ParamField>
+
+### Returns
+
+<ResponseField name="result" type="object">
+  <ResponseField name="error" type="string | null" required>
+    `null` if addition succeeded, error message otherwise
+  </ResponseField>
+</ResponseField>
+
+### Example
+
+```typescript
+import { addToCollection } from '@/features/collections/actions';
+
+const result = await addToCollection(
+  'prompt-uuid',
+  'collection-uuid'
+);
+
+if (result.error) {
+  console.error('Failed to add prompt:', result.error);
+} else {
+  console.log('Prompt added to collection');
+}
+```
+
+### Behavior
+
+- Creates a record in the `collection_prompts` join table
+- A prompt can belong to multiple collections
+- If the prompt is already in the collection, the database will return an error (unique constraint violation)
+- Revalidates the `/prompts` page cache after addition
+- RLS policies ensure users can only add prompts to their own collections
+
+---
+
+## removeFromCollection
+
+Removes a prompt from a collection.
+
+**Location:** `src/features/collections/actions.ts:120`
+
+```typescript
+export async function removeFromCollection(
+  promptId: string,
+  collectionId: string
+): Promise<{ error: string | null }>
+```
+
+### Parameters
+
+<ParamField path="promptId" type="string" required>
+  UUID of the prompt to remove
+</ParamField>
+
+<ParamField path="collectionId" type="string" required>
+  UUID of the collection to remove the prompt from
+</ParamField>
+
+### Returns
+
+<ResponseField name="result" type="object">
+  <ResponseField name="error" type="string | null" required>
+    `null` if removal succeeded, error message otherwise
+  </ResponseField>
+</ResponseField>
+
+### Example
+
+```typescript
+import { removeFromCollection } from '@/features/collections/actions';
+
+const result = await removeFromCollection(
+  'prompt-uuid',
+  'collection-uuid'
+);
+
+if (result.error) {
+  console.error('Failed to remove prompt:', result.error);
+} else {
+  console.log('Prompt removed from collection');
+}
+```
+
+### Behavior
+
+- Deletes the record from the `collection_prompts` join table
+- Does NOT delete the prompt itself
+- If the prompt is not in the collection, the operation succeeds silently (no error)
+- Revalidates the `/prompts` page cache after removal
+- RLS policies ensure users can only modify their own collections
+
+---
+
+## Authentication
+
+All actions require authentication. The pattern used is:
+
+```typescript
+const cookieStore = await cookies();
+const supabase = createClient(cookieStore);
+const { data: { user } } = await supabase.auth.getUser();
+
+if (!user) {
+  return { error: "Unauthorized" };
+}
+```
+
+## Error Handling
+
+Actions follow a consistent error response pattern:
+
+```typescript
+if (error) {
+  return { error: error.message };
+}
+```
+
+### Common Errors
+
+- `"Unauthorized"` - User is not logged in
+- `"Invalid input"` - Validation failed (check `details` field for specifics)
+- `"Name is required"` - Collection name is empty
+- `"Name is too long"` - Collection name exceeds 50 characters
+- `"Description is too long"` - Description exceeds 200 characters
+- Database constraint violations (e.g., duplicate prompt in collection)
+
+## Cache Revalidation
+
+All mutating actions call `revalidatePath("/prompts")` to ensure the UI immediately reflects changes. This invalidates Next.js cache for the prompts list page.
+
+## Database Schema
+
+Collections use two tables:
+
+### `collections`
+```sql
+CREATE TABLE collections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  name VARCHAR(50) NOT NULL,
+  description VARCHAR(200),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+### `collection_prompts` (join table)
+```sql
+CREATE TABLE collection_prompts (
+  collection_id UUID REFERENCES collections(id) ON DELETE CASCADE,
+  prompt_id UUID REFERENCES prompts(id) ON DELETE CASCADE,
+  PRIMARY KEY (collection_id, prompt_id)
+);
+```
+
+## Security
+
+- Row-Level Security (RLS) policies ensure users can only access their own collections
+- All actions inherit the authenticated user's context from the Supabase client
+- Foreign key constraints prevent orphaned data
+- Cascade deletes ensure referential integrity
+
+## Usage Example: Full Collection Workflow
+
+```typescript
+import {
+  createCollection,
+  addToCollection,
+  getCollections,
+  removeFromCollection,
+  deleteCollection,
+} from '@/features/collections/actions';
+
+// 1. Create a collection
+const createResult = await createCollection({
+  name: 'API Prompts',
+  description: 'Prompts for API documentation and testing',
+});
+
+if (createResult.data) {
+  const collectionId = createResult.data.id;
+  
+  // 2. Add prompts to the collection
+  await addToCollection('prompt-1-uuid', collectionId);
+  await addToCollection('prompt-2-uuid', collectionId);
+  
+  // 3. List all collections
+  const { data: collections } = await getCollections();
+  console.log('Collections:', collections);
+  
+  // 4. Remove a prompt from the collection
+  await removeFromCollection('prompt-1-uuid', collectionId);
+  
+  // 5. Delete the collection (prompts are preserved)
+  await deleteCollection(collectionId);
+}
+```

@@ -1,0 +1,198 @@
+---
+title: "prompt_versions"
+description: "Immutable version history for prompt content"
+---
+
+## Overview
+
+The `prompt_versions` table stores immutable snapshots of prompt content. Each row represents a single version, identified by `version_number` within a prompt. This is the "versions" half of the two-table versioning pattern.
+
+## Schema
+
+<ParamField path="id" type="UUID" required>
+  Primary key. Auto-generated using `gen_random_uuid()`.
+</ParamField>
+
+<ParamField path="prompt_id" type="UUID" required>
+  Parent prompt. References `prompts(id)` with `ON DELETE CASCADE`.
+</ParamField>
+
+<ParamField path="version_number" type="INT" required>
+  Sequential version number starting at 1. Must be unique per `prompt_id` (enforced by `unique_prompt_version` constraint).
+</ParamField>
+
+<ParamField path="content" type="TEXT" required>
+  The prompt template content. May include variable placeholders like `{{variable_name}}` for later substitution.
+</ParamField>
+
+<ParamField path="version_note" type="TEXT">
+  Optional human-readable note describing this version (e.g., "Added error handling", "Fixed typo in instructions").
+</ParamField>
+
+<ParamField path="created_at" type="TIMESTAMPTZ" required>
+  Creation timestamp. Defaults to `timezone('utc', now())`.
+</ParamField>
+
+## Constraints
+
+```sql
+ALTER TABLE prompt_versions 
+ADD CONSTRAINT unique_prompt_version 
+UNIQUE (prompt_id, version_number);
+```
+
+Ensures each prompt has exactly one version 1, one version 2, etc. No gaps or duplicates.
+
+## Indexes
+
+```sql
+CREATE INDEX idx_prompt_versions_prompt_id ON prompt_versions(prompt_id);
+```
+
+Fast lookup of all versions for a given prompt. Critical for `get_latest_prompt_content()` and version history queries.
+
+## Row Level Security
+
+```sql
+CREATE POLICY "Users can view versions of their own prompts" 
+  ON prompt_versions FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM prompts
+      WHERE prompts.id = prompt_versions.prompt_id
+      AND prompts.user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can insert versions for their own prompts" 
+  ON prompt_versions FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM prompts
+      WHERE prompts.id = prompt_versions.prompt_id
+      AND prompts.user_id = auth.uid()
+    )
+  );
+```
+
+**Important:** No UPDATE or DELETE policies. Version history is immutable once created.
+
+## Immutability
+
+Version rows are append-only. The schema intentionally omits:
+
+- `updated_at` column (versions never change)
+- UPDATE policies (no edits allowed)
+- DELETE policies (history is permanent)
+
+If you need to "fix" a version, create a new version with incremented `version_number`.
+
+## Relationships
+
+- **Many-to-One** with `prompts`: Each version belongs to one prompt
+- **One-to-Many** with `prompt_snapshots`: Snapshots reference a specific version
+
+## Querying Versions
+
+### Get Latest Content
+
+```sql
+SELECT content FROM prompt_versions
+WHERE prompt_id = 'uuid-here'
+ORDER BY version_number DESC
+LIMIT 1;
+```
+
+### Get Full Version History
+
+```sql
+SELECT * FROM prompt_versions
+WHERE prompt_id = 'uuid-here'
+ORDER BY version_number ASC;
+```
+
+### Count Versions
+
+```sql
+SELECT COUNT(*) FROM prompt_versions
+WHERE prompt_id = 'uuid-here';
+```
+
+## Helper Functions
+
+### get_latest_prompt_content
+
+```sql
+CREATE FUNCTION get_latest_prompt_content(p_id UUID) RETURNS TEXT AS $$
+  SELECT content FROM prompt_versions
+  WHERE prompt_id = p_id
+  ORDER BY version_number DESC LIMIT 1;
+$$ LANGUAGE sql STABLE;
+```
+
+Used by search triggers and Server Actions to fetch the current content without a JOIN.
+
+### get_latest_prompt_version_id
+
+```sql
+CREATE FUNCTION get_latest_prompt_version_id(p_id UUID) RETURNS UUID AS $$
+  SELECT id FROM prompt_versions
+  WHERE prompt_id = p_id
+  ORDER BY version_number DESC LIMIT 1;
+$$ LANGUAGE sql STABLE;
+```
+
+Returns the UUID of the latest version (used in `PromptWithLatestVersion` type).
+
+## Triggers
+
+### Search Index Update
+
+```sql
+CREATE TRIGGER tr_prompt_versions_search_update
+  AFTER INSERT ON prompt_versions
+  FOR EACH ROW EXECUTE FUNCTION update_prompt_search_tokens_trigger();
+```
+
+Whenever a new version is inserted, the parent `prompts` row's `search_tokens` field is recomputed to include the new content. See supabase/migrations/20260208000002_search_index.sql:17.
+
+## Creating a New Version
+
+Server Actions use this pattern:
+
+```typescript
+// src/features/prompts/actions.ts (conceptual)
+const { data: versions } = await supabase
+  .from('prompt_versions')
+  .select('version_number')
+  .eq('prompt_id', promptId)
+  .order('version_number', { ascending: false })
+  .limit(1);
+
+const nextVersionNumber = versions?.[0]?.version_number + 1 || 1;
+
+await supabase.from('prompt_versions').insert({
+  prompt_id: promptId,
+  version_number: nextVersionNumber,
+  content: newContent,
+  version_note: 'Updated via web editor',
+});
+```
+
+## TypeScript Types
+
+```typescript
+// src/features/prompts/types/index.ts
+export interface PromptVersion {
+  id: string;
+  prompt_id: string;
+  version_number: number;
+  content: string;
+  version_note: string | null;
+  created_at: string;
+}
+```
+
+## Migration File
+
+- **20260208000001_prompt_schema.sql:12**: Initial table creation and policies

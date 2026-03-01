@@ -1,0 +1,229 @@
+---
+title: Introduction
+description: Overview of PromptRepo's API architecture, data patterns, and server-side execution model
+---
+
+PromptRepo is built on **Next.js 15 App Router** with **Supabase** (PostgreSQL + Row Level Security). The API follows a **Server Actions** pattern for mutations and uses **async Server Components** for data fetching, minimizing client-side JavaScript and maximizing security.
+
+## Architecture Overview
+
+### Technology Stack
+
+- **Next.js 15** — App Router, Server Components, Server Actions
+- **Supabase** — PostgreSQL database with built-in auth and RLS
+- **@supabase/ssr** — SSR-compatible authentication client
+- **TypeScript** — Full type safety across the stack
+- **Zod v4** — Schema validation for all inputs
+
+### Server Actions Pattern
+
+PromptRepo uses **Server Actions** instead of traditional REST API routes for all mutations. Server Actions run on the server, provide automatic CSRF protection, and integrate seamlessly with React Server Components.
+
+```typescript title="src/features/prompts/actions/save-prompt.ts"
+'use server';
+
+import { createClient } from '@/lib/supabase/server';
+import { cookies } from 'next/headers';
+
+export async function savePrompt(input: PromptCreateInput) {
+  const cookieStore = await cookies();
+  const supabase = createClient(cookieStore);
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  // Insert data with automatic RLS enforcement
+  const { data, error } = await supabase
+    .from('prompts')
+    .insert({ title, content, user_id: user.id })
+    .select()
+    .single();
+
+  return { success: true, data };
+}
+```
+
+Key characteristics:
+- Declared with `'use server'` directive
+- Run on the server only (never exposed to the client)
+- Automatically handle authentication via cookies
+- Return serializable data structures
+
+### Database Access Patterns
+
+PromptRepo uses three distinct Supabase client factories depending on the execution context:
+
+| Client | Usage | Authentication |
+|--------|-------|----------------|
+| `createClient()` (server) | Server Components, Server Actions | Session cookies (read/write) |
+| `createMiddlewareClient()` | Middleware only | Session cookies (can refresh) |
+| `createBrowserClient()` | Client Components | Session cookies (browser) |
+| `createPublicClient()` | Public pages (no auth) | Anonymous anon key |
+| `createServiceClient()` | Admin operations | Service role key (bypasses RLS) |
+
+#### Server Component Example
+
+```typescript title="src/app/page.tsx"
+import { createClient } from '@/lib/supabase/server';
+import { cookies } from 'next/headers';
+
+export default async function HomePage() {
+  const cookieStore = await cookies();
+  const supabase = createClient(cookieStore);
+
+  const { data: prompts } = await supabase
+    .from('prompts')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  return <PromptList prompts={prompts} />;
+}
+```
+
+#### Client Component Example
+
+```typescript title="src/components/features/example-client.tsx"
+'use client';
+
+import { createClient } from '@/lib/supabase/client';
+import { useEffect, useState } from 'react';
+
+export function ExampleClient() {
+  const [data, setData] = useState(null);
+  const supabase = createClient();
+
+  useEffect(() => {
+    supabase.from('prompts').select('*').then(({ data }) => setData(data));
+  }, []);
+
+  return <div>{/* render data */}</div>;
+}
+```
+
+**Best Practice:** Prefer async Server Components for data fetching to keep the client bundle small and avoid exposing query logic to the browser.
+
+### Row Level Security (RLS)
+
+All database tables enforce **Row Level Security** policies. Even with direct database access, users can only read/write their own data.
+
+#### Example: Prompts Table Policies
+
+```sql title="supabase/migrations/20260208000001_prompt_schema.sql"
+ALTER TABLE public.prompts ENABLE ROW LEVEL SECURITY;
+
+-- Users can only view their own prompts
+CREATE POLICY "Users can view their own prompts" ON public.prompts
+  FOR SELECT USING (auth.uid() = user_id);
+
+-- Users can only insert prompts for themselves
+CREATE POLICY "Users can insert their own prompts" ON public.prompts
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- Public prompts visible to everyone (including anonymous)
+CREATE POLICY "Public prompts are readable by anyone" ON public.prompts
+  FOR SELECT USING (is_public = true);
+```
+
+RLS runs at the database level, so it protects against:
+- Direct SQL queries
+- Compromised application code
+- API key misuse
+- Server Action bypasses
+
+### Data Model
+
+PromptRepo uses a **two-table versioning system**:
+
+- **`prompts`** — HEAD state (mutable metadata: title, description, is_public)
+- **`prompt_versions`** — Immutable history (version_number, content, version_note)
+
+Every mutation creates a new `prompt_versions` row and updates the HEAD pointer atomically.
+
+```typescript
+// Creating a new version
+const { data: version } = await supabase
+  .from('prompt_versions')
+  .insert({
+    prompt_id: '...',
+    version_number: 2,
+    content: 'Updated prompt content',
+    version_note: 'Fixed typo'
+  });
+
+// Update HEAD pointer
+await supabase
+  .from('prompts')
+  .update({ latest_version_id: version.id })
+  .eq('id', promptId);
+```
+
+## Feature Modules
+
+PromptRepo organizes domain logic into feature modules under `src/features/`:
+
+```
+src/features/
+├── prompts/         # CRUD, lifecycle (archive/restore)
+├── collections/     # User-owned groupings
+├── search/          # Full-text search (PostgreSQL tsvector)
+├── resolution-engine/  # Variable substitution
+├── snapshots/       # Point-in-time captures
+├── api-keys/        # API key management
+└── mcp/             # Model Context Protocol server
+```
+
+Each module contains:
+- **actions/** — Server Actions for mutations
+- **queries/** — Data fetching functions
+- **types/** — TypeScript types
+- **components/** — React components
+
+## API Endpoints
+
+PromptRepo exposes **one HTTP API endpoint** for external integrations:
+
+### MCP Endpoint
+
+**`POST /api/mcp`** — JSON-RPC 2.0 Model Context Protocol server
+
+- Authenticates via **API keys** (not session cookies)
+- Allows AI agents (Claude Desktop, Claude Code, etc.) to read and resolve prompts
+- Returns public prompts for anonymous requests
+- Full documentation: [MCP Overview](/mcp/overview)
+
+All other operations use Server Actions invoked from React components.
+
+## Middleware
+
+The Next.js middleware (`src/middleware.ts`) handles:
+
+1. **Session refresh** — Updates Supabase auth tokens on every request
+2. **Route protection** — Redirects unauthenticated users to `/auth/login`
+3. **Public route exceptions** — Allows `/auth/*`, `/p/*` (public sharing), and `/api/mcp` without auth
+
+```typescript title="src/middleware.ts"
+import { updateSession } from '@/lib/supabase/middleware';
+
+export async function middleware(request: NextRequest) {
+  return await updateSession(request);
+}
+
+export const config = {
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+  ],
+};
+```
+
+The `updateSession` function (in `src/lib/supabase/middleware.ts`):
+- Creates a middleware-aware Supabase client
+- Checks for a valid user session
+- Redirects to login if the user is not authenticated and the route is protected
+- Allows the request to proceed for authenticated users or public routes
+
+## Next Steps
+
+- [Authentication](/api/authentication) — Learn about session-based and API key authentication
+- [Database Schema](/api/schema/prompts) — Explore the database structure
+- [Server Actions](/api/actions/prompts) — Prompt management actions
+- [MCP Overview](/mcp/overview) — Model Context Protocol integration
