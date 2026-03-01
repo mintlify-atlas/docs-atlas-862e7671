@@ -1,0 +1,255 @@
+---
+title: API Key Actions
+description: Server actions for managing user API keys for programmatic access to PromptRepo.
+---
+
+# API Key Actions
+
+Server actions for creating, listing, and revoking API keys. API keys enable programmatic access to the MCP endpoint without browser sessions.
+
+## createApiKey
+
+Creates a new API key for the authenticated user. The plaintext key is returned **only once** and must be stored securely by the caller.
+
+**Source:** `src/features/api-keys/actions.ts:26`
+
+### Parameters
+
+<ParamField path="label" type="string" required>
+  A descriptive label for the API key (1-100 characters). Used to identify the key in the UI.
+</ParamField>
+
+### Returns
+
+<ResponseField name="success" type="boolean">
+  Whether the operation succeeded
+</ResponseField>
+
+<ResponseField name="data" type="CreateApiKeyResult">
+  <Expandable title="properties">
+    <ResponseField name="apiKey" type="ApiKey">
+      The created API key record
+      <Expandable title="properties">
+        <ResponseField name="id" type="string">
+          UUID of the key
+        </ResponseField>
+        <ResponseField name="user_id" type="string">
+          UUID of the owning user
+        </ResponseField>
+        <ResponseField name="label" type="string">
+          Descriptive label
+        </ResponseField>
+        <ResponseField name="created_at" type="string">
+          ISO 8601 timestamp
+        </ResponseField>
+        <ResponseField name="revoked_at" type="string | null">
+          ISO 8601 timestamp if revoked, null otherwise
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="plaintext" type="string">
+      The plaintext API key (64 characters). **Never stored in the database.** This is the only time you'll see it.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if `success` is false
+</ResponseField>
+
+### Example
+
+```typescript
+import { createApiKey } from '@/features/api-keys/actions';
+
+const result = await createApiKey('Production MCP Server');
+
+if (result.success) {
+  const { apiKey, plaintext } = result.data;
+  console.log('Key ID:', apiKey.id);
+  console.log('Plaintext key:', plaintext); // Store this securely!
+} else {
+  console.error(result.error);
+}
+```
+
+### Behavior
+
+- **Validation**: Label must be 1-100 characters
+- **Authentication**: Requires active session (uses cookies)
+- **Limit Enforcement**: Maximum 10 active (non-revoked) keys per user
+- **Plaintext Exposure**: The plaintext key is returned exactly once and never stored
+- **Hash Storage**: Only the SHA-256 hash is stored in `user_api_keys.key_hash`
+
+### Errors
+
+| Error | Cause |
+|-------|-------|
+| `Unauthorized` | No authenticated session |
+| `Invalid label` | Label validation failed |
+| `You may only have 10 active API keys...` | User has reached the limit |
+| `Failed to create API key` | Database insertion error |
+
+---
+
+## listApiKeys
+
+Returns all API keys (active and revoked) for the authenticated user, ordered by creation date descending.
+
+**Source:** `src/features/api-keys/actions.ts:113`
+
+### Parameters
+
+None.
+
+### Returns
+
+<ResponseField name="success" type="boolean">
+  Whether the operation succeeded
+</ResponseField>
+
+<ResponseField name="data" type="ApiKey[]">
+  Array of API key records (without `key_hash`)
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if `success` is false
+</ResponseField>
+
+### Example
+
+```typescript
+import { listApiKeys } from '@/features/api-keys/actions';
+
+const result = await listApiKeys();
+
+if (result.success) {
+  console.log('Your API keys:', result.data);
+  result.data.forEach(key => {
+    console.log(`${key.label}: ${key.revoked_at ? 'Revoked' : 'Active'}`);
+  });
+} else {
+  console.error(result.error);
+}
+```
+
+### Behavior
+
+- **Authentication**: Requires active session
+- **Ordering**: Newest keys first (descending `created_at`)
+- **Security**: The `key_hash` column is never selected or exposed
+- **Includes Revoked**: Returns both active and revoked keys
+
+---
+
+## revokeApiKey
+
+Revokes an API key by setting `revoked_at` to the current timestamp. The operation is **idempotent** — revoking an already-revoked key succeeds without error.
+
+**Source:** `src/features/api-keys/actions.ts:155`
+
+### Parameters
+
+<ParamField path="keyId" type="string" required>
+  UUID of the API key to revoke
+</ParamField>
+
+### Returns
+
+<ResponseField name="success" type="boolean">
+  Whether the operation succeeded
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if `success` is false
+</ResponseField>
+
+### Example
+
+```typescript
+import { revokeApiKey } from '@/features/api-keys/actions';
+
+const result = await revokeApiKey('f47ac10b-58cc-4372-a567-0e02b2c3d479');
+
+if (result.success) {
+  console.log('Key revoked successfully');
+} else {
+  console.error(result.error);
+}
+```
+
+### Behavior
+
+- **Authentication**: Requires active session
+- **Authorization**: Users can only revoke their own keys (enforced by `user_id` filter)
+- **Idempotent**: Revoking an already-revoked key returns `success: true`
+- **Soft Delete**: The key record remains in the database with `revoked_at` set
+- **Immediate Effect**: Revoked keys are rejected by the MCP endpoint immediately
+
+### Security
+
+Revoked keys:
+- Cannot be used to authenticate MCP requests
+- Remain visible in the UI with a "Revoked" badge
+- Cannot be un-revoked (deletion is permanent in effect)
+
+---
+
+## Authentication
+
+All API key actions require **session-based authentication**. They use the standard Supabase client created from cookies:
+
+```typescript
+const cookieStore = await cookies();
+const supabase = createClient(cookieStore);
+```
+
+The user ID is resolved from the session, not from request parameters.
+
+---
+
+## Database Schema
+
+API keys are stored in the `user_api_keys` table:
+
+```sql
+CREATE TABLE user_api_keys (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  key_hash TEXT NOT NULL,
+  label TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  revoked_at TIMESTAMPTZ
+);
+```
+
+### RLS Policies
+
+- Users can SELECT their own keys
+- Users can INSERT their own keys
+- Users can UPDATE (revoke) their own keys
+- The `key_hash` column is never exposed to clients
+
+---
+
+## Security Best Practices
+
+<Warning>
+  **Never log or display plaintext API keys** after the initial creation response. Store them securely in environment variables or secret managers.
+</Warning>
+
+<Tip>
+  Rotate API keys regularly by creating a new key and revoking the old one. PromptRepo supports up to 10 active keys per user to enable zero-downtime rotation.
+</Tip>
+
+<Note>
+  API keys are hashed with SHA-256 before storage. The plaintext key is never persisted and cannot be recovered if lost.
+</Note>
+
+---
+
+## Next Steps
+
+- [API Authentication](/api/authentication) — Understanding session-based vs API key authentication
+- [MCP Overview](/mcp/overview) — Using API keys with the MCP endpoint
+- [MCP Configuration](/mcp/configuration) — Setting up AI clients with API keys

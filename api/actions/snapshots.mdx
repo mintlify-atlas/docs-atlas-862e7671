@@ -1,0 +1,264 @@
+---
+title: Snapshot Actions
+description: Server action for saving variable configurations as snapshots.
+---
+
+# Snapshot Actions
+
+Server action for creating prompt snapshots. Snapshots store variable values alongside a prompt version, enabling quick recall of tested configurations.
+
+## saveSnapshot
+
+Saves a new snapshot linking a prompt version with a set of variable values. Snapshots enable users to store and recall variable configurations for specific prompt versions.
+
+**Source:** `src/features/snapshots/actions.ts:8`
+
+### Parameters
+
+<ParamField path="input" type="SnapshotInput" required>
+  Snapshot data to save
+  <Expandable title="properties">
+    <ParamField path="prompt_version_id" type="string" required>
+      UUID of the prompt version this snapshot references
+    </ParamField>
+    <ParamField path="name" type="string" required>
+      Descriptive name for the snapshot (e.g., "Production Config", "Test Data")
+    </ParamField>
+    <ParamField path="variables" type="Record<string, string>" required>
+      Map of variable names to their values. Keys must match `{{variable}}` placeholders in the prompt content.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Returns
+
+<ResponseField name="success" type="boolean">
+  Whether the operation succeeded
+</ResponseField>
+
+<ResponseField name="data" type="PromptSnapshot">
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">
+      UUID of the created snapshot
+    </ResponseField>
+    <ResponseField name="user_id" type="string">
+      UUID of the owning user
+    </ResponseField>
+    <ResponseField name="prompt_version_id" type="string">
+      UUID of the referenced prompt version
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      Snapshot name
+    </ResponseField>
+    <ResponseField name="variables" type="Record<string, string>">
+      Stored variable values (JSONB)
+    </ResponseField>
+    <ResponseField name="created_at" type="string">
+      ISO 8601 timestamp
+    </ResponseField>
+    <ResponseField name="updated_at" type="string">
+      ISO 8601 timestamp
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if `success` is false
+</ResponseField>
+
+### Example
+
+```typescript
+import { saveSnapshot } from '@/features/snapshots/actions';
+
+const result = await saveSnapshot({
+  prompt_version_id: 'e7b8c92d-4f5a-4d3e-8c1a-9f2b3d4e5a6b',
+  name: 'Production API Config',
+  variables: {
+    api_endpoint: 'https://api.example.com',
+    timeout: '30',
+    retry_count: '3'
+  }
+});
+
+if (result.success) {
+  console.log('Snapshot saved:', result.data.id);
+} else {
+  console.error(result.error);
+}
+```
+
+### Behavior
+
+- **Validation**: Input is validated against the `snapshotSchema` (Zod)
+- **Authentication**: Requires active session
+- **User Binding**: `user_id` is automatically set from the authenticated session
+- **Cache Revalidation**: Calls `revalidatePath('/')` to refresh UI
+- **Version Reference**: Snapshots reference a specific `prompt_version_id`, not the prompt HEAD
+
+### Use Cases
+
+**Environment-Specific Configurations**
+```typescript
+// Development snapshot
+await saveSnapshot({
+  prompt_version_id: versionId,
+  name: 'Dev Environment',
+  variables: {
+    api_url: 'http://localhost:3000',
+    debug: 'true'
+  }
+});
+
+// Production snapshot
+await saveSnapshot({
+  prompt_version_id: versionId,
+  name: 'Production Environment',
+  variables: {
+    api_url: 'https://api.production.com',
+    debug: 'false'
+  }
+});
+```
+
+**A/B Testing Configurations**
+```typescript
+await saveSnapshot({
+  prompt_version_id: versionId,
+  name: 'Variant A - Concise',
+  variables: {
+    tone: 'concise',
+    max_length: '100'
+  }
+});
+
+await saveSnapshot({
+  prompt_version_id: versionId,
+  name: 'Variant B - Detailed',
+  variables: {
+    tone: 'detailed',
+    max_length: '500'
+  }
+});
+```
+
+**Client-Specific Templates**
+```typescript
+await saveSnapshot({
+  prompt_version_id: versionId,
+  name: 'Client: Acme Corp',
+  variables: {
+    company_name: 'Acme Corp',
+    industry: 'Manufacturing',
+    contact_email: 'support@acme.com'
+  }
+});
+```
+
+---
+
+## Database Schema
+
+Snapshots are stored in the `prompt_snapshots` table:
+
+```sql
+CREATE TABLE prompt_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  prompt_version_id UUID NOT NULL REFERENCES prompt_versions(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  variables JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### RLS Policies
+
+- Users can SELECT their own snapshots
+- Users can INSERT their own snapshots
+- Users can UPDATE their own snapshots
+- Users can DELETE their own snapshots
+
+---
+
+## Integration with Variable Resolution
+
+Snapshots work seamlessly with the resolution engine:
+
+```typescript
+import { saveSnapshot } from '@/features/snapshots/actions';
+import { resolvePrompt } from '@/lib/utils/variable-parser';
+
+// 1. User fills out variable form
+const variables = {
+  language: 'TypeScript',
+  framework: 'Next.js'
+};
+
+// 2. Save snapshot for later reuse
+await saveSnapshot({
+  prompt_version_id: versionId,
+  name: 'My Next.js Setup',
+  variables
+});
+
+// 3. Later: Load snapshot and resolve prompt
+const snapshot = await getSnapshot(snapshotId);
+const resolved = resolvePrompt(promptContent, snapshot.variables);
+```
+
+---
+
+## Validation
+
+Input is validated using a Zod schema (`src/lib/validation/snapshot.ts`):
+
+```typescript
+const snapshotSchema = z.object({
+  prompt_version_id: z.string().uuid(),
+  name: z.string().min(1).max(200),
+  variables: z.record(z.string(), z.string())
+});
+```
+
+### Validation Errors
+
+If validation fails, the error response includes all issues:
+
+```typescript
+{
+  success: false,
+  error: "prompt_version_id: Invalid UUID, name: String must contain at least 1 character"
+}
+```
+
+---
+
+## Security
+
+<Note>
+  Snapshots are **private to each user**. The `user_id` is enforced both by the server action (session) and by RLS policies.
+</Note>
+
+<Warning>
+  **Do not store sensitive credentials** in snapshot variables. Snapshots are stored as JSONB in the database without encryption. Use environment variables or secret managers for sensitive values.
+</Warning>
+
+---
+
+## Cascade Deletion
+
+Snapshots are deleted automatically when:
+- The owning user is deleted (`ON DELETE CASCADE` on `user_id`)
+- The referenced prompt version is deleted (`ON DELETE CASCADE` on `prompt_version_id`)
+
+This ensures orphaned snapshots cannot exist.
+
+---
+
+## Next Steps
+
+- [Variable Resolution Feature](/features/variable-resolution) — Understanding variable placeholders
+- [Snapshots Schema](/api/schema/snapshots) — Database structure and indexes
+- [Prompt Versions Schema](/api/schema/versions) — How snapshots reference versions

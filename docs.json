@@ -107,7 +107,9 @@
             "pages": [
               "api/actions/prompts",
               "api/actions/search",
-              "api/actions/collections"
+              "api/actions/collections",
+              "api/actions/api-keys",
+              "api/actions/snapshots"
             ]
           }
         ]
